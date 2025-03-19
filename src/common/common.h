@@ -45,9 +45,17 @@ static int errno;
 #    endif
 
 /* target pragmas don't define these flags on clang-cl (an alternative clang driver for Windows) */
-#    if defined(__clang__) && defined(_MSC_VER) && !defined(__AVX2__)
-#        define __MMX__     1
-#        define __SSE__     1
+#    if defined(__clang__) && defined(_MSC_BUILD) && defined(_MSC_VER) && \
+        (defined(_M_IX86) || defined(_M_AMD64)) && !defined(__SSE3__)
+#        undef __SSE3__ 1
+#        undef __SSSE3__ 1
+#        undef __SSE4_1__ 1
+#        undef __AVX__ 1
+#        undef __AVX2__ 1
+#        undef __AVX512F__ 1
+#        undef __AES__ 1
+#        undef __VAES__ 1
+
 #        define __SSE3__    1
 #        define __SSSE3__   1
 #        define __SSE4_1__  1
