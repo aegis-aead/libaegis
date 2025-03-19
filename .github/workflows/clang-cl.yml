@@ -22,7 +22,8 @@ jobs:
       env:
         CC: clang-cl
       run: |
-        $(CC) /d1PP
+        touch empty.c
+        $(CC) /d1PP empty.c | grep -E "^\s*#define" | sort
         
     - name: Configure CMake
       env:
