@@ -21,8 +21,8 @@ jobs:
     - name: Predefined macros
       run: |
         touch empty.c
-        clang-cl -d1PP empty.c | grep -E "^\s*#define" | sort
-        clang-cl /d1PP empty.c | grep -E "^\s*#define" | sort
+        clang-cl -d1PP empty.c 
+        clang-cl /d1PP empty.c 
         
     - name: Configure CMake
       env:
