@@ -19,7 +19,7 @@ jobs:
     - uses: ilammy/msvc-dev-cmd@v1
 
     - name: Environment
-      run: clang-cl -E -dM nul
+      run: clang-cl -E -Xclang -dM nul
 
     - name: Configure CMake
       env:
