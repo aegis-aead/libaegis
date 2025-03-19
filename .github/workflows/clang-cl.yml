@@ -22,8 +22,7 @@ jobs:
       env:
         CC: clang-cl
       run: |
-        touch a.c
-        $(CC) -dM -E a.c
+        $(CC) /d1PP
         
     - name: Configure CMake
       env:
