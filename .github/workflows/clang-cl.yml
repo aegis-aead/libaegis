@@ -1,10 +1,10 @@
-name: CMake
+name: Clang-CL
 
 on:
   push:
-    branches: [ "cl" ]
+    branches: [ "main", "cl" ]
   pull_request:
-    branches: [ "cl" ]
+    branches: [ "main", "cl" ]
 
 env:
   BUILD_TYPE: Release

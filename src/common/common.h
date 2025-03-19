@@ -43,31 +43,21 @@ static int errno;
 #            undef HAVE_VAESINTRIN_H
 #        endif
 #    endif
-#endif
 
 /* target pragmas don't define these flags on clang-cl (an alternative clang driver for Windows) */
-#if defined(__clang__) && defined(_MSC_VER)
-#    undef __MMX__
-#    undef __SSE__
-#    undef __SSE3__
-#    undef __SSSE3__
-#    undef __SSE4_1__
-#    undef __AVX__
-#    undef __AVX2__
-#    undef __AVX512F__
-#    undef __AES__
-#    undef __VAES__
+#    if defined(__clang__) && defined(_MSC_VER) && !defined(__MMX__)
+#        define __MMX__     1
+#        define __SSE__     1
+#        define __SSE3__    1
+#        define __SSSE3__   1
+#        define __SSE4_1__  1
+#        define __AVX__     1
+#        define __AVX2__    1
+#        define __AVX512F__ 1
+#        define __AES__     1
+#        define __VAES__    1
+#    endif
 
-#    define __MMX__     1
-#    define __SSE__     1
-#    define __SSE3__    1
-#    define __SSSE3__   1
-#    define __SSE4_1__  1
-#    define __AVX__     1
-#    define __AVX2__    1
-#    define __AVX512F__ 1
-#    define __AES__     1
-#    define __VAES__    1
 #endif
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
