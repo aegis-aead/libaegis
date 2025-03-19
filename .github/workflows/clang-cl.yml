@@ -16,13 +16,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - uses: ilammy/msvc-dev-cmd@v1    
-
-    - name: Predefined macros
-      run: |
-        touch empty.c
-        clang-cl -d1PP empty.c 
-        clang-cl /d1PP empty.c 
+    - uses: ilammy/msvc-dev-cmd@v1
         
     - name: Configure CMake
       env:
