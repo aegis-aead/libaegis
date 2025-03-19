@@ -45,17 +45,18 @@ static int errno;
 #    endif
 #endif
 
+/* target pragmas don't define these flags on clang-cl (an alternative clang driver for Windows) */
 #if defined(__clang__) && defined(_MSC_VER)
-#    define __MMX__ 1
-#    define __SSE__ 1
-#    define __SSE3__ 1
-#    define __SSSE3__ 1
-#    define __SSE4_1__ 1
-#    define __AVX__ 1
-#    define __AVX2__ 1
+#    define __MMX__     1
+#    define __SSE__     1
+#    define __SSE3__    1
+#    define __SSSE3__   1
+#    define __SSE4_1__  1
+#    define __AVX__     1
+#    define __AVX2__    1
 #    define __AVX512F__ 1
-#    define __AES__ 1
-#    define __VAES__ 1
+#    define __AES__     1
+#    define __VAES__    1
 #endif
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
