@@ -19,11 +19,10 @@ jobs:
     - uses: ilammy/msvc-dev-cmd@v1    
 
     - name: Predefined macros
-      env:
-        CC: clang-cl
       run: |
         touch empty.c
-        $(CC) -d1PP empty.c | grep -E "^\s*#define" | sort
+        clang-cl -d1PP empty.c | grep -E "^\s*#define" | sort
+        clang-cl /d1PP empty.c | grep -E "^\s*#define" | sort
         
     - name: Configure CMake
       env:
