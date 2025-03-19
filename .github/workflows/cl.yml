@@ -2,7 +2,7 @@ name: CMake
 
 on:
   push:
-    branches: [ "ci" ]
+    branches: [ "cl" ]
   pull_request:
     branches: [ "cl" ]
 
