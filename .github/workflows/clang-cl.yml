@@ -18,6 +18,13 @@ jobs:
     
     - uses: ilammy/msvc-dev-cmd@v1    
 
+    - name: Predefined macros
+      env:
+        CC: clang-cl
+      run: |
+        touch a.c
+        $(CC) -dM -E a.c
+        
     - name: Configure CMake
       env:
         CC: clang-cl
