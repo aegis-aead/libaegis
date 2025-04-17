@@ -6,14 +6,14 @@
 #include "aegis128l.h"
 #include "aegis128l_aesni.h"
 #include "aegis128l_altivec.h"
-#include "aegis128l_armcrypto.h"
+#include "aegis128l_neon_aes.h"
 
 #ifndef HAS_HW_AES
 #    include "aegis128l_soft.h"
 static const aegis128l_implementation *implementation = &aegis128l_soft_implementation;
 #else
 #    if defined(__aarch64__) || defined(_M_ARM64)
-static const aegis128l_implementation *implementation = &aegis128l_armcrypto_implementation;
+static const aegis128l_implementation *implementation = &aegis128l_neon_aes_implementation;
 #    elif defined(__x86_64__) || defined(__i386__)
 static const aegis128l_implementation *implementation = &aegis128l_aesni_implementation;
 #    elif defined(__ALTIVEC__) && defined(__CRYPTO__)
@@ -232,8 +232,8 @@ aegis128l_pick_best_implementation(void)
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
-    if (aegis_runtime_has_armcrypto()) {
-        implementation = &aegis128l_armcrypto_implementation;
+    if (aegis_runtime_has_neon_aes()) {
+        implementation = &aegis128l_neon_aes_implementation;
         return 0;
     }
 #endif

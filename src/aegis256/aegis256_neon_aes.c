@@ -5,7 +5,7 @@
 
 #    include "../common/common.h"
 #    include "aegis256.h"
-#    include "aegis256_armcrypto.h"
+#    include "aegis256_neon_aes.h"
 
 #    ifndef __ARM_FEATURE_CRYPTO
 #        define __ARM_FEATURE_CRYPTO 1
@@ -50,7 +50,7 @@ aegis256_update(aes_block_t *const state, const aes_block_t d)
 
 #    include "aegis256_common.h"
 
-struct aegis256_implementation aegis256_armcrypto_implementation = {
+struct aegis256_implementation aegis256_neon_aes_implementation = {
     .encrypt_detached              = encrypt_detached,
     .decrypt_detached              = decrypt_detached,
     .encrypt_unauthenticated       = encrypt_unauthenticated,

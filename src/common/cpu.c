@@ -22,7 +22,7 @@
 typedef struct CPUFeatures_ {
     int initialized;
     int has_neon;
-    int has_armcrypto;
+    int has_neon_aes;
     int has_avx;
     int has_avx2;
     int has_avx512f;
@@ -88,9 +88,9 @@ _runtime_arm_cpu_features(CPUFeatures *const cpu_features)
     }
 
 #if __ARM_FEATURE_CRYPTO
-    cpu_features->has_armcrypto = 1;
+    cpu_features->has_neon_aes = 1;
 #elif defined(_M_ARM64)
-    cpu_features->has_armcrypto =
+    cpu_features->has_neon_aes =
         1; /* assuming all CPUs supported by ARM Windows have the crypto extensions */
 #elif defined(__APPLE__) && defined(CPU_TYPE_ARM64) && defined(CPU_SUBTYPE_ARM64E)
     {
@@ -103,30 +103,30 @@ _runtime_arm_cpu_features(CPUFeatures *const cpu_features)
             cpu_type == CPU_TYPE_ARM64 &&
             sysctlbyname("hw.cpusubtype", &cpu_subtype, &cpu_subtype_len, NULL, 0) == 0 &&
             (cpu_subtype == CPU_SUBTYPE_ARM64E || cpu_subtype == CPU_SUBTYPE_ARM64_V8)) {
-            cpu_features->has_armcrypto = 1;
+            cpu_features->has_neon_aes = 1;
         }
     }
 #elif defined(HAVE_ANDROID_GETCPUFEATURES) && defined(ANDROID_CPU_ARM_FEATURE_AES)
-    cpu_features->has_armcrypto = (android_getCpuFeatures() & ANDROID_CPU_ARM_FEATURE_AES) != 0x0;
+    cpu_features->has_neon_aes = (android_getCpuFeatures() & ANDROID_CPU_ARM_FEATURE_AES) != 0x0;
 #elif (defined(__aarch64__) || defined(_M_ARM64)) && defined(AT_HWCAP)
 #    ifdef HAVE_GETAUXVAL
-    cpu_features->has_armcrypto = (getauxval(AT_HWCAP) & (1L << 3)) != 0;
+    cpu_features->has_neon_aes = (getauxval(AT_HWCAP) & (1L << 3)) != 0;
 #    elif defined(HAVE_ELF_AUX_INFO)
     {
         unsigned long buf;
         if (elf_aux_info(AT_HWCAP, (void *) &buf, (int) sizeof buf) == 0) {
-            cpu_features->has_armcrypto = (buf & (1L << 3)) != 0;
+            cpu_features->has_neon_aes = (buf & (1L << 3)) != 0;
         }
     }
 #    endif
 #elif defined(__arm__) && defined(AT_HWCAP2)
 #    ifdef HAVE_GETAUXVAL
-    cpu_features->has_armcrypto = (getauxval(AT_HWCAP2) & (1L << 0)) != 0;
+    cpu_features->has_neon_aes = (getauxval(AT_HWCAP2) & (1L << 0)) != 0;
 #    elif defined(HAVE_ELF_AUX_INFO)
     {
         unsigned long buf;
         if (elf_aux_info(AT_HWCAP2, (void *) &buf, (int) sizeof buf) == 0) {
-            cpu_features->has_armcrypto = (buf & (1L << 0)) != 0;
+            cpu_features->has_neon_aes = (buf & (1L << 0)) != 0;
         }
     }
 #    endif
@@ -293,9 +293,9 @@ aegis_runtime_has_neon(void)
 }
 
 int
-aegis_runtime_has_armcrypto(void)
+aegis_runtime_has_neon_aes(void)
 {
-    return _cpu_features.has_armcrypto;
+    return _cpu_features.has_neon_aes;
 }
 
 int

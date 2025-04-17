@@ -5,7 +5,7 @@
 
 #    include "../common/common.h"
 #    include "aegis128x4.h"
-#    include "aegis128x4_armcrypto.h"
+#    include "aegis128x4_neon_aes.h"
 
 #    ifndef __ARM_FEATURE_CRYPTO
 #        define __ARM_FEATURE_CRYPTO 1
@@ -94,7 +94,7 @@ aegis128x4_update(aes_block_t *const state, const aes_block_t d1, const aes_bloc
 
 #    include "aegis128x4_common.h"
 
-struct aegis128x4_implementation aegis128x4_armcrypto_implementation = {
+struct aegis128x4_implementation aegis128x4_neon_aes_implementation = {
     .encrypt_detached              = encrypt_detached,
     .decrypt_detached              = decrypt_detached,
     .encrypt_unauthenticated       = encrypt_unauthenticated,

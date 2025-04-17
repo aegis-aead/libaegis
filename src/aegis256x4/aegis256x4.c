@@ -6,7 +6,7 @@
 #include "aegis256x4.h"
 #include "aegis256x4_aesni.h"
 #include "aegis256x4_altivec.h"
-#include "aegis256x4_armcrypto.h"
+#include "aegis256x4_neon_aes.h"
 #include "aegis256x4_avx2.h"
 #include "aegis256x4_avx512.h"
 
@@ -15,7 +15,7 @@
 static const aegis256x4_implementation *implementation = &aegis256x4_soft_implementation;
 #else
 #    if defined(__aarch64__) || defined(_M_ARM64)
-static const aegis256x4_implementation *implementation = &aegis256x4_armcrypto_implementation;
+static const aegis256x4_implementation *implementation = &aegis256x4_neon_aes_implementation;
 #    elif defined(__x86_64__) || defined(__i386__)
 static const aegis256x4_implementation *implementation = &aegis256x4_aesni_implementation;
 #    elif defined(__ALTIVEC__) && defined(__CRYPTO__)
@@ -233,8 +233,8 @@ aegis256x4_pick_best_implementation(void)
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
-    if (aegis_runtime_has_armcrypto()) {
-        implementation = &aegis256x4_armcrypto_implementation;
+    if (aegis_runtime_has_neon_aes()) {
+        implementation = &aegis256x4_neon_aes_implementation;
         return 0;
     }
 #endif
