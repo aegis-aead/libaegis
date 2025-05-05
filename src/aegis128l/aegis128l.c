@@ -7,6 +7,7 @@
 #include "aegis128l_aesni.h"
 #include "aegis128l_altivec.h"
 #include "aegis128l_neon_aes.h"
+#include "aegis128l_neon_sha3.h"
 
 #ifndef HAS_HW_AES
 #    include "aegis128l_soft.h"
@@ -232,6 +233,10 @@ aegis128l_pick_best_implementation(void)
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
+    if (aegis_runtime_has_neon_sha3()) {
+        implementation = &aegis128l_neon_sha3_implementation;
+        return 0;
+    }
     if (aegis_runtime_has_neon_aes()) {
         implementation = &aegis128l_neon_aes_implementation;
         return 0;
