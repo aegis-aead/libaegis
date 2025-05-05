@@ -15,6 +15,8 @@ int aegis_runtime_has_neon(void);
 
 int aegis_runtime_has_neon_aes(void);
 
+int aegis_runtime_has_neon_sha3(void);
+
 int aegis_runtime_has_avx(void);
 
 int aegis_runtime_has_avx2(void);

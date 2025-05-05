@@ -23,6 +23,7 @@ typedef struct CPUFeatures_ {
     int initialized;
     int has_neon;
     int has_neon_aes;
+    int has_neon_sha3;
     int has_avx;
     int has_avx2;
     int has_avx512f;
@@ -48,6 +49,9 @@ static CPUFeatures _cpu_features;
 #define XCR0_ZMM_HI256 0x00000040
 #define XCR0_HI16_ZMM  0x00000080
 
+// Define hwcap values ourselves: building with an old auxv header where these
+// hwcap values are not defined should not prevent features from being enabled.
+
 // Arm hwcaps.
 #define AEGIS_ARM_HWCAP_NEON (1L << 12)
 #define AEGIS_ARM_HWCAP2_AES (1L << 0)
@@ -55,6 +59,7 @@ static CPUFeatures _cpu_features;
 // AArch64 hwcaps.
 #define AEGIS_AARCH64_HWCAP_ASIMD (1L << 1)
 #define AEGIS_AARCH64_HWCAP_AES (1L << 3)
+#define AEGIS_AARCH64_HWCAP_SHA3 (1L << 17)
 
 #if defined(__APPLE__) && defined(CPU_TYPE_ARM64) && defined(CPU_SUBTYPE_ARM64E)
 // sysctlbyname() parameter documentation for instruction set characteristics:
@@ -118,6 +123,19 @@ _runtime_arm_cpu_features(CPUFeatures *const cpu_features)
     cpu_features->has_neon_aes = _have_hwcap(AT_HWCAP, AEGIS_AARCH64_HWCAP_AES);
 #elif defined(__arm__) && defined(AT_HWCAP2)
     cpu_features->has_neon_aes = _have_hwcap(AT_HWCAP2, AEGIS_ARM_HWCAP2_AES);
+#endif
+
+    // The FEAT_SHA3 implementation assumes that FEAT_AES is also present.
+    if (cpu_features->has_neon_aes == 0) {
+        return 0;
+    }
+
+#if __ARM_FEATURE_SHA3
+    cpu_features->has_neon_sha3 = 1;
+#elif defined(__APPLE__) && defined(CPU_TYPE_ARM64) && defined(CPU_SUBTYPE_ARM64E)
+    cpu_features->has_neon_sha3 = _have_feature("hw.optional.arm.FEAT_SHA3");
+#elif (defined(__aarch64__) || defined(_M_ARM64)) && defined(AT_HWCAP)
+    cpu_features->has_neon_sha3 = _have_hwcap(AT_HWCAP, AEGIS_AARCH64_HWCAP_SHA3);
 #endif
 
     return 0;
@@ -284,6 +302,12 @@ int
 aegis_runtime_has_neon_aes(void)
 {
     return _cpu_features.has_neon_aes;
+}
+
+int
+aegis_runtime_has_neon_sha3(void)
+{
+    return _cpu_features.has_neon_sha3;
 }
 
 int
