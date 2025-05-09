@@ -70,10 +70,10 @@ AES_BLOCK_STORE(uint8_t *a, const aes_block_t b)
 static inline aes_block_t
 AES_ENC(const aes_block_t a, const aes_block_t b)
 {
-    return (aes_block_t) { veorq_u8(vaesmcq_u8(vaeseq_u8((a.b0), vmovq_n_u8(0))), (b.b0)),
-                           veorq_u8(vaesmcq_u8(vaeseq_u8((a.b1), vmovq_n_u8(0))), (b.b1)),
-                           veorq_u8(vaesmcq_u8(vaeseq_u8((a.b2), vmovq_n_u8(0))), (b.b2)),
-                           veorq_u8(vaesmcq_u8(vaeseq_u8((a.b3), vmovq_n_u8(0))), (b.b3)) };
+    return (aes_block_t) { veorq_u8(vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), a.b0)), b.b0),
+                           veorq_u8(vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), a.b1)), b.b1),
+                           veorq_u8(vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), a.b2)), b.b2),
+                           veorq_u8(vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), a.b3)), b.b3) };
 }
 
 static inline void
