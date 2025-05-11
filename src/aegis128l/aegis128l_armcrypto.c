@@ -34,20 +34,38 @@ typedef uint8x16_t aes_block_t;
 #    define AES_BLOCK_STORE(A, B)     vst1q_u8((A), (B))
 #    define AES_ENC(A, B)             veorq_u8(vaesmcq_u8(vaeseq_u8((A), vmovq_n_u8(0))), (B))
 
+// Optimized version of aegis128l_update for Apple Silicon (M-series chips)
+// Reordered operations to minimize pipeline stalls and dependency chains
 static inline void
 aegis128l_update(aes_block_t *const state, const aes_block_t d1, const aes_block_t d2)
 {
-    aes_block_t tmp;
-
-    tmp      = state[7];
-    state[7] = AES_ENC(state[6], state[7]);
-    state[6] = AES_ENC(state[5], state[6]);
-    state[5] = AES_ENC(state[4], state[5]);
-    state[4] = AES_BLOCK_XOR(AES_ENC(state[3], state[4]), d2);
-    state[3] = AES_ENC(state[2], state[3]);
-    state[2] = AES_ENC(state[1], state[2]);
-    state[1] = AES_ENC(state[0], state[1]);
-    state[0] = AES_BLOCK_XOR(AES_ENC(tmp, state[0]), d1);
+    // Save state[7] before it's updated
+    aes_block_t tmp = state[7];
+    
+    // Pre-compute state transformations to break dependency chains
+    // Use a forward approach to allow for better instruction scheduling
+    aes_block_t s0_enc = AES_ENC(tmp, state[0]);
+    aes_block_t s1_enc = AES_ENC(state[0], state[1]);
+    aes_block_t s2_enc = AES_ENC(state[1], state[2]);
+    aes_block_t s3_enc = AES_ENC(state[2], state[3]);
+    aes_block_t s4_enc = AES_ENC(state[3], state[4]);
+    aes_block_t s5_enc = AES_ENC(state[4], state[5]);
+    aes_block_t s6_enc = AES_ENC(state[5], state[6]);
+    aes_block_t s7_enc = AES_ENC(state[6], state[7]);
+    
+    // Apply XOR operations for values that need them
+    s0_enc = AES_BLOCK_XOR(s0_enc, d1);
+    s4_enc = AES_BLOCK_XOR(s4_enc, d2);
+    
+    // Update the state array - done at the end to allow maximum reordering by compiler
+    state[0] = s0_enc;
+    state[1] = s1_enc;
+    state[2] = s2_enc;
+    state[3] = s3_enc;
+    state[4] = s4_enc;
+    state[5] = s5_enc;
+    state[6] = s6_enc;
+    state[7] = s7_enc;
 }
 
 #    include "aegis128l_common.h"

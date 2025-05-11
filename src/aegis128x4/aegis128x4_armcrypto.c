@@ -58,6 +58,7 @@ AES_BLOCK_LOAD_64x2(uint64_t a, uint64_t b)
     const uint8x16_t t = vreinterpretq_u8_u64(vsetq_lane_u64((a), vmovq_n_u64(b), 1));
     return (aes_block_t) { t, t, t, t };
 }
+
 static inline void
 AES_BLOCK_STORE(uint8_t *a, const aes_block_t b)
 {
@@ -67,29 +68,65 @@ AES_BLOCK_STORE(uint8_t *a, const aes_block_t b)
     vst1q_u8(a + 48, b.b3);
 }
 
+// Optimized AES_ENC for Apple Silicon with reordering for better instruction scheduling
 static inline aes_block_t
 AES_ENC(const aes_block_t a, const aes_block_t b)
 {
-    return (aes_block_t) { veorq_u8(vaesmcq_u8(vaeseq_u8((a.b0), vmovq_n_u8(0))), (b.b0)),
-                           veorq_u8(vaesmcq_u8(vaeseq_u8((a.b1), vmovq_n_u8(0))), (b.b1)),
-                           veorq_u8(vaesmcq_u8(vaeseq_u8((a.b2), vmovq_n_u8(0))), (b.b2)),
-                           veorq_u8(vaesmcq_u8(vaeseq_u8((a.b3), vmovq_n_u8(0))), (b.b3)) };
+    // Execute all AESE instructions first
+    uint8x16_t t0 = vaeseq_u8(a.b0, vmovq_n_u8(0));
+    uint8x16_t t1 = vaeseq_u8(a.b1, vmovq_n_u8(0));
+    uint8x16_t t2 = vaeseq_u8(a.b2, vmovq_n_u8(0));
+    uint8x16_t t3 = vaeseq_u8(a.b3, vmovq_n_u8(0));
+    
+    // Then apply MixColumns to all blocks
+    t0 = vaesmcq_u8(t0);
+    t1 = vaesmcq_u8(t1);
+    t2 = vaesmcq_u8(t2);
+    t3 = vaesmcq_u8(t3);
+    
+    // Finally XOR with b blocks
+    t0 = veorq_u8(t0, b.b0);
+    t1 = veorq_u8(t1, b.b1);
+    t2 = veorq_u8(t2, b.b2);
+    t3 = veorq_u8(t3, b.b3);
+    
+    return (aes_block_t) { t0, t1, t2, t3 };
 }
 
+// Optimized implementation of aegis128x4_update for Apple Silicon
+// Maximizes instruction-level parallelism and reduces data dependencies
 static inline void
 aegis128x4_update(aes_block_t *const state, const aes_block_t d1, const aes_block_t d2)
 {
-    aes_block_t tmp;
-
-    tmp      = state[7];
-    state[7] = AES_ENC(state[6], state[7]);
-    state[6] = AES_ENC(state[5], state[6]);
-    state[5] = AES_ENC(state[4], state[5]);
-    state[4] = AES_BLOCK_XOR(AES_ENC(state[3], state[4]), d2);
-    state[3] = AES_ENC(state[2], state[3]);
-    state[2] = AES_ENC(state[1], state[2]);
-    state[1] = AES_ENC(state[0], state[1]);
-    state[0] = AES_BLOCK_XOR(AES_ENC(tmp, state[0]), d1);
+    // Save state[7] before it's overwritten
+    aes_block_t tmp = state[7];
+    
+    // Pre-compute all AES operations to maximize parallelism
+    // This allows the Apple Silicon processors to better schedule instructions
+    // and utilize their multiple execution units
+    aes_block_t s0_enc = AES_ENC(tmp, state[0]);
+    aes_block_t s1_enc = AES_ENC(state[0], state[1]);
+    aes_block_t s2_enc = AES_ENC(state[1], state[2]);
+    aes_block_t s3_enc = AES_ENC(state[2], state[3]);
+    aes_block_t s4_enc = AES_ENC(state[3], state[4]);
+    aes_block_t s5_enc = AES_ENC(state[4], state[5]);
+    aes_block_t s6_enc = AES_ENC(state[5], state[6]);
+    aes_block_t s7_enc = AES_ENC(state[6], state[7]);
+    
+    // Apply XOR operations for states that need them
+    s0_enc = AES_BLOCK_XOR(s0_enc, d1);
+    s4_enc = AES_BLOCK_XOR(s4_enc, d2);
+    
+    // Update the state array in one batch at the end
+    // This gives the compiler more freedom to reorder operations
+    state[0] = s0_enc;
+    state[1] = s1_enc;
+    state[2] = s2_enc;
+    state[3] = s3_enc;
+    state[4] = s4_enc;
+    state[5] = s5_enc;
+    state[6] = s6_enc;
+    state[7] = s7_enc;
 }
 
 #    include "aegis128x4_common.h"
