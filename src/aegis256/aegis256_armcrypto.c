@@ -32,30 +32,45 @@ typedef uint8x16_t aes_block_t;
 #    define AES_BLOCK_LOAD(A)         vld1q_u8(A)
 #    define AES_BLOCK_LOAD_64x2(A, B) vreinterpretq_u8_u64(vsetq_lane_u64((A), vmovq_n_u64(B), 1))
 #    define AES_BLOCK_STORE(A, B)     vst1q_u8((A), (B))
-#    define AES_ENC(A, B)             veorq_u8(vaesmcq_u8(vaeseq_u8((A), vmovq_n_u8(0))), (B))
 
-// Optimized version of aegis256_update for Apple Silicon
-// Reorders operations to reduce pipeline stalls and improve parallelism
+// Optimized AES_ENC function for Apple Silicon
+// Leverages instruction fusion capabilities
+static inline uint8x16_t 
+AES_ENC_FUSED(const uint8x16_t A, const uint8x16_t B)
+{
+    // Apple Silicon can fuse AESE+AESMC operations
+    const uint8x16_t zero = vmovq_n_u8(0);
+    uint8x16_t result = vaeseq_u8(A, zero);    // AES SubBytes + ShiftRows
+    result = vaesmcq_u8(result);               // AES MixColumns (can be fused)
+    return veorq_u8(result, B);                // XOR with round key (potentially fused)
+}
+
+// Highly optimized aegis256_update for Apple Silicon
+// Maximizes instruction fusion and parallelism
 static inline void
 aegis256_update(aes_block_t *const state, const aes_block_t d)
 {
-    // Save state[5] before it's updated
-    aes_block_t tmp = state[5];
+    // Save state[5] before it's overwritten
+    // Using const helps compiler optimize register allocation
+    const aes_block_t tmp = state[5];
     
-    // Pre-compute all AES operations to allow for better instruction scheduling on Apple Silicon
-    // This approach allows the CPU to execute operations in parallel where possible
-    aes_block_t s0_enc = AES_ENC(tmp, state[0]);
-    aes_block_t s1_enc = AES_ENC(state[0], state[1]);
-    aes_block_t s2_enc = AES_ENC(state[1], state[2]);
-    aes_block_t s3_enc = AES_ENC(state[2], state[3]);
-    aes_block_t s4_enc = AES_ENC(state[3], state[4]);
-    aes_block_t s5_enc = AES_ENC(state[4], state[5]);
+    // Pre-compute all AES operations to maximize parallelism on Apple Silicon
+    // Using specialized AES_ENC_FUSED for better instruction fusion
+    // Using const for all variables helps compiler optimize
+    const aes_block_t s0_enc = AES_ENC_FUSED(tmp, state[0]);
+    const aes_block_t s1_enc = AES_ENC_FUSED(state[0], state[1]);
+    const aes_block_t s2_enc = AES_ENC_FUSED(state[1], state[2]);
+    const aes_block_t s3_enc = AES_ENC_FUSED(state[2], state[3]);
+    const aes_block_t s4_enc = AES_ENC_FUSED(state[3], state[4]);
+    const aes_block_t s5_enc = AES_ENC_FUSED(state[4], state[5]);
     
     // Apply XOR operation for state[0]
-    s0_enc = AES_BLOCK_XOR(s0_enc, d);
+    // Keeping this separate for better instruction scheduling
+    const aes_block_t s0_final = AES_BLOCK_XOR(s0_enc, d);
     
-    // Update state array - done at the end to allow maximum reordering by compiler
-    state[0] = s0_enc;
+    // Update state array all at once
+    // Sequential memory updates for better cache behavior on Apple Silicon
+    state[0] = s0_final;
     state[1] = s1_enc;
     state[2] = s2_enc;
     state[3] = s3_enc;

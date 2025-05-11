@@ -32,37 +32,53 @@ typedef uint8x16_t aes_block_t;
 #    define AES_BLOCK_LOAD(A)         vld1q_u8(A)
 #    define AES_BLOCK_LOAD_64x2(A, B) vreinterpretq_u8_u64(vsetq_lane_u64((A), vmovq_n_u64(B), 1))
 #    define AES_BLOCK_STORE(A, B)     vst1q_u8((A), (B))
-#    define AES_ENC(A, B)             veorq_u8(vaesmcq_u8(vaeseq_u8((A), vmovq_n_u8(0))), (B))
 
-// Optimized version of aegis128l_update for Apple Silicon (M-series chips)
-// Reordered operations to minimize pipeline stalls and dependency chains
+// Optimized AES_ENC function for Apple Silicon's instruction fusion
+// Apple Silicon can fuse AESE+AESMC operations and possibly adjacent vector operations
+static inline uint8x16_t 
+AES_ENC_FUSED(const uint8x16_t A, const uint8x16_t B)
+{
+    // This allows better instruction fusion on Apple Silicon
+    uint8x16_t zero = vmovq_n_u8(0);
+    uint8x16_t result = vaeseq_u8(A, zero);    // AES SubBytes + ShiftRows
+    result = vaesmcq_u8(result);               // AES MixColumns (can be fused with previous)
+    return veorq_u8(result, B);                // XOR with round key (can be fused with previous)
+}
+
+// Super-optimized aegis128l_update for Apple Silicon that maximizes 
+// instruction fusion and instruction-level parallelism
 static inline void
 aegis128l_update(aes_block_t *const state, const aes_block_t d1, const aes_block_t d2)
 {
-    // Save state[7] before it's updated
-    aes_block_t tmp = state[7];
+    // Save state[7] before it's overwritten
+    const aes_block_t tmp = state[7]; 
     
-    // Pre-compute state transformations to break dependency chains
-    // Use a forward approach to allow for better instruction scheduling
-    aes_block_t s0_enc = AES_ENC(tmp, state[0]);
-    aes_block_t s1_enc = AES_ENC(state[0], state[1]);
-    aes_block_t s2_enc = AES_ENC(state[1], state[2]);
-    aes_block_t s3_enc = AES_ENC(state[2], state[3]);
-    aes_block_t s4_enc = AES_ENC(state[3], state[4]);
-    aes_block_t s5_enc = AES_ENC(state[4], state[5]);
-    aes_block_t s6_enc = AES_ENC(state[5], state[6]);
-    aes_block_t s7_enc = AES_ENC(state[6], state[7]);
+    // Group all AES operations for better instruction fusion and scheduling
+    // Apple Silicon can potentially fuse AESE+AESMC operations and schedule them efficiently
     
-    // Apply XOR operations for values that need them
-    s0_enc = AES_BLOCK_XOR(s0_enc, d1);
-    s4_enc = AES_BLOCK_XOR(s4_enc, d2);
+    // First compute all AES operations to maximize parallel execution
+    // Use the optimized AES_ENC_FUSED function to enable instruction fusion
+    const aes_block_t s0_enc = AES_ENC_FUSED(tmp, state[0]);
+    const aes_block_t s1_enc = AES_ENC_FUSED(state[0], state[1]);
+    const aes_block_t s2_enc = AES_ENC_FUSED(state[1], state[2]);
+    const aes_block_t s3_enc = AES_ENC_FUSED(state[2], state[3]);
+    const aes_block_t s4_enc = AES_ENC_FUSED(state[3], state[4]);
+    const aes_block_t s5_enc = AES_ENC_FUSED(state[4], state[5]);
+    const aes_block_t s6_enc = AES_ENC_FUSED(state[5], state[6]);
+    const aes_block_t s7_enc = AES_ENC_FUSED(state[6], state[7]);
     
-    // Update the state array - done at the end to allow maximum reordering by compiler
-    state[0] = s0_enc;
+    // Compute XOR operations
+    // Using const for all intermediate values helps compiler optimize
+    const aes_block_t s0_final = AES_BLOCK_XOR(s0_enc, d1);
+    const aes_block_t s4_final = AES_BLOCK_XOR(s4_enc, d2);
+    
+    // Update state array all at once to allow better instruction scheduling
+    // Using a sequential update pattern for better cache behavior
+    state[0] = s0_final;
     state[1] = s1_enc;
     state[2] = s2_enc;
     state[3] = s3_enc;
-    state[4] = s4_enc;
+    state[4] = s4_final;
     state[5] = s5_enc;
     state[6] = s6_enc;
     state[7] = s7_enc;
