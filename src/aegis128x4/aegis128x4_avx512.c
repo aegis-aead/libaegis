@@ -180,7 +180,17 @@ aegis128x4_dec(uint8_t *const dst, const uint8_t *const src, aes_block_t *const 
     aegis128x4_update(state, msg0_final, msg1_final);
 }
 
+#        define aegis128x4_absorb aegis128x4_absorb_impl
+#        define aegis128x4_enc aegis128x4_enc_impl
+#        define aegis128x4_dec aegis128x4_dec_impl
+
 #        include "aegis128x4_common.h"
+
+#        undef aegis128x4_absorb
+#        undef aegis128x4_enc
+#        undef aegis128x4_dec
+
+// Override the common implementations with our optimized versions
 
 struct aegis128x4_implementation aegis128x4_avx512_implementation = {
     .encrypt_detached              = encrypt_detached,

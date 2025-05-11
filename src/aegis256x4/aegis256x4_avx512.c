@@ -160,7 +160,17 @@ aegis256x4_dec(uint8_t *const dst, const uint8_t *const src, aes_block_t *const 
     aegis256x4_update(state, msg_final);
 }
 
+#        define aegis256x4_absorb aegis256x4_absorb_impl
+#        define aegis256x4_enc aegis256x4_enc_impl
+#        define aegis256x4_dec aegis256x4_dec_impl
+
 #        include "aegis256x4_common.h"
+
+#        undef aegis256x4_absorb
+#        undef aegis256x4_enc
+#        undef aegis256x4_dec
+
+// Override the common implementations with our optimized versions
 
 struct aegis256x4_implementation aegis256x4_avx512_implementation = {
     .encrypt_detached              = encrypt_detached,

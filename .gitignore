@@ -63,3 +63,5 @@ zig-out
 build
 
 .vscode
+
+**/.claude/settings.local.json
