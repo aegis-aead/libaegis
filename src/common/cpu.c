@@ -24,6 +24,7 @@ typedef struct CPUFeatures_ {
     int has_neon;
     int has_neon_aes;
     int has_neon_sha3;
+    int has_sve2_aes;
     int has_avx;
     int has_avx2;
     int has_avx512f;
@@ -60,6 +61,7 @@ static CPUFeatures _cpu_features;
 #define AEGIS_AARCH64_HWCAP_ASIMD (1L << 1)
 #define AEGIS_AARCH64_HWCAP_AES (1L << 3)
 #define AEGIS_AARCH64_HWCAP_SHA3 (1L << 17)
+#define AEGIS_AARCH64_HWCAP2_SVEAES (1L << 2)
 
 #if defined(__APPLE__) && defined(CPU_TYPE_ARM64) && defined(CPU_SUBTYPE_ARM64E)
 // sysctlbyname() parameter documentation for instruction set characteristics:
@@ -130,12 +132,35 @@ _runtime_arm_cpu_features(CPUFeatures *const cpu_features)
         return 0;
     }
 
+    // At the time of writing Windows does not provide a mechanism for
+    // detecting FEAT_SHA3, however FEAT_SHA3 is mandatory if FEAT_SVE_AES is
+    // also implemented, so test that instead.
 #if __ARM_FEATURE_SHA3
     cpu_features->has_neon_sha3 = 1;
+#elif defined(_M_ARM64) && defined(PF_ARM_SVE_AES_INSTRUCTIONS_AVAILABLE)
+    cpu_features->has_neon_sha3 =
+        IsProcessorFeaturePresent(PF_ARM_SVE_AES_INSTRUCTIONS_AVAILABLE);
 #elif defined(__APPLE__) && defined(CPU_TYPE_ARM64) && defined(CPU_SUBTYPE_ARM64E)
     cpu_features->has_neon_sha3 = _have_feature("hw.optional.arm.FEAT_SHA3");
 #elif (defined(__aarch64__) || defined(_M_ARM64)) && defined(AT_HWCAP)
     cpu_features->has_neon_sha3 = _have_hwcap(AT_HWCAP, AEGIS_AARCH64_HWCAP_SHA3);
+#endif
+
+    // The FEAT_SVE_AES implementation assumes that FEAT_AES and FEAT_SHA3 are
+    // also present.
+    if (cpu_features->has_neon_sha3 == 0) {
+        return 0;
+    }
+
+    // At the time of writing Apple Silicon platforms do not provide a
+    // mechanism for detecting FEAT_SVE_AES.
+#if __ARM_FEATURE_SVE2_AES
+    cpu_features->has_sve2_aes = 1;
+#elif defined(_M_ARM64) && defined(PF_ARM_SVE_AES_INSTRUCTIONS_AVAILABLE)
+    cpu_features->has_sve2_aes =
+        IsProcessorFeaturePresent(PF_ARM_SVE_AES_INSTRUCTIONS_AVAILABLE);
+#elif (defined(__aarch64__) || defined(_M_ARM64)) && defined(AT_HWCAP)
+    cpu_features->has_sve2_aes = _have_hwcap(AT_HWCAP2, AEGIS_AARCH64_HWCAP2_SVEAES);
 #endif
 
     return 0;
@@ -308,6 +333,12 @@ int
 aegis_runtime_has_neon_sha3(void)
 {
     return _cpu_features.has_neon_sha3;
+}
+
+int
+aegis_runtime_has_sve2_aes(void)
+{
+    return _cpu_features.has_sve2_aes;
 }
 
 int
