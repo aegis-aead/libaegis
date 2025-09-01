@@ -54,7 +54,7 @@ configure_package_CONFIG_FILE("${CONFIG_TEMPLATE_FILE}" "${CONFIG_FILE}"
 
 install(FILES "${CONFIG_FILE}" DESTINATION "${INSTALL_CONFIG_DIR}")
 
-write_basic_package_version_file("${PROJECT_NAME}-config-version.cmake" VERSION 0.4.0 COMPATIBILITY AnyNewerVersion)
+write_basic_package_version_file("${PROJECT_NAME}-config-version.cmake" VERSION 0.4.1 COMPATIBILITY AnyNewerVersion)
 install(FILES "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake" DESTINATION "${INSTALL_CONFIG_DIR}")
 
 export(EXPORT "${TARGETS_EXPORT_NAME}" FILE "${TARGETS_EXPORT_FILE}" NAMESPACE "${PROJECT_NAME}::")

@@ -3,7 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseFast });
-    const version = std.SemanticVersion.parse("0.4.0") catch unreachable;
+    const version = std.SemanticVersion.parse("0.4.1") catch unreachable;
 
     const lib = b.addLibrary(.{
         .name = "aegis",
