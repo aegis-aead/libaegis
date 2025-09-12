@@ -1,6 +1,6 @@
 .{
     .name = .aegis,
-    .version = "0.4.1",
+    .version = "0.4.2",
     .minimum_zig_version = "0.15.1",
     .paths = .{ "README.md", "LICENSE", "src", "build.zig", "build.zig.zon" },
     .fingerprint = 0x5e23831cc5883dc1,
