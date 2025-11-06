@@ -615,7 +615,7 @@ state_decrypt_detached_update(aegis128x2_state *st_, uint8_t *m, size_t mlen_max
     }
 
     if (m != NULL) {
-        if (mlen_max < (clen % RATE)) {
+        if (mlen_max < (clen & ~(size_t) (RATE - 1))) {
             errno = ERANGE;
             return -1;
         }
