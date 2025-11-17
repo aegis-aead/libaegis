@@ -16,5 +16,5 @@ jobs:
         run: |
             grep -E 'const version =' build.zig | grep -E '"${{  github.ref_name }}"' || exit 78
             echo "Zig build version check passed."
-            grep -E 'COMPATIBILITY AnyNewerVersion' CMakeLists.txt | grep -E ' ${{ github.ref_name }} ' || exit 78
+            grep -E 'project\(aegis.*VERSION ${{ github.ref_name }}.*\)' CMakeLists.txt || exit 78
             echo "CMake version check passed."

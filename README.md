@@ -26,6 +26,11 @@ Note that the compiler makes a difference. Zig (or a recent `clang` with target-
 zig build -Drelease
 ```
 
+To build the library as a shared object using the `-Dlink-mode` option:
+```sh
+zig build -Dlink-mode=dynamic -Drelease
+```
+
 The library and headers are installed in the `zig-out` folder.
 
 To favor performance over side-channel mitigations on devices without hardware acceleration, add `-Dfavor-performance`:
@@ -40,6 +45,7 @@ A benchmark can also be built with the `-Dwith-benchmark` option:
 zig build -Drelease -Dfavor-performance -Dwith-benchmark
 ```
 
+
 `libaegis` doesn't need WASI nor any extension to work on WebAssembly. The `wasm32-freestanding` target is fully supported.
 
 WebAssembly extensions such as `bulk_memory` and `simd128` can be enabled by adding `-Dcpu=baseline+bulk_memory+simd128` to the command line.
@@ -52,6 +58,7 @@ cd build
 cmake -DCMAKE_INSTALL_PREFIX=/install/prefix ..
 make install
 ```
+To build the library as a shared library, add `-DBUILD_SHARED_LIBS=On`.
 
 To favor performance over side-channel mitigations on devices without hardware acceleration, add `-DFAVOR_PERFORMANCE`.
 

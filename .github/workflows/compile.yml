@@ -40,3 +40,9 @@ jobs:
           zig build -Dtarget=aarch64-macos -Dcpu=apple_m2
           zig build -Dtarget=wasm32-wasi
           zig build -Dtarget=wasm32-freestanding
+
+          zig build -Dlink-mode=dynamic
+          zig build -Dlink-mode=dynamic -Drelease
+          zig build -Dlink-mode=dynamic -Drelease -Dfavor-performance
+          zig build -Dlink-mode=dynamic -Drelease -Dwith-benchmark
+          zig build -Dlink-mode=dynamic -Drelease -Dwith-benchmark -Dfavor-performance
