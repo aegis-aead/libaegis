@@ -143,7 +143,11 @@ typedef struct aegis_raf_rng {
  *
  * hash_leaf:   Hash a chunk. Called with the plaintext chunk data, its length
  *              (may be less than chunk_size for the final chunk), the chunk
- *              index, and the current file size for domain separation.
+ *              index, and the current file size. IMPORTANT: The hash should
+ *              only depend on chunk data, chunk_len, and chunk_idx. The
+ *              file_size parameter is informational only and MUST NOT be
+ *              included in the hash, otherwise leaf hashes become stale when
+ *              file size changes.
  *
  * hash_parent: Hash two child nodes to produce a parent. Called with left and
  *              right child hashes, the tree level (0 = leaves), and the node
