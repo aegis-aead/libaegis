@@ -59,6 +59,9 @@ aegis_raf_merkle_buffer_size(const aegis_raf_merkle_config *cfg)
 
     count = cfg->max_chunks;
     while (count > 0) {
+        if (total_nodes > UINT64_MAX - count) {
+            return SIZE_MAX;
+        }
         total_nodes += count;
         if (count == 1) {
             break;
@@ -152,7 +155,7 @@ aegis_raf_merkle_config_validate(const aegis_raf_merkle_config *cfg)
     }
 
     required = aegis_raf_merkle_buffer_size(cfg);
-    if (cfg->len < required) {
+    if (required == SIZE_MAX || cfg->len < required) {
         errno = EINVAL;
         return -1;
     }
