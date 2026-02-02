@@ -51,6 +51,7 @@ aegis_raf_merkle_buffer_size(const aegis_raf_merkle_config *cfg)
 {
     uint64_t total_nodes = 0;
     uint64_t count;
+    uint64_t size;
 
     if (cfg == NULL || cfg->max_chunks == 0 || cfg->hash_len == 0) {
         return 0;
@@ -65,7 +66,15 @@ aegis_raf_merkle_buffer_size(const aegis_raf_merkle_config *cfg)
         count = (count + 1) / 2;
     }
 
-    return (size_t) (total_nodes * cfg->hash_len);
+    if (total_nodes > SIZE_MAX / cfg->hash_len) {
+        return SIZE_MAX;
+    }
+    size = total_nodes * cfg->hash_len;
+    if (size > SIZE_MAX) {
+        return SIZE_MAX;
+    }
+
+    return (size_t) size;
 }
 
 size_t

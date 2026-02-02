@@ -778,6 +778,8 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
     uint64_t                rec_size;
     uint64_t                chunks_size;
     uint64_t                new_backing_size;
+    uint64_t                last_chunk_idx;
+    size_t                  new_chunk_len;
 
     if (size == internal->file_size) {
         return 0;
@@ -806,10 +808,25 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
         return -1;
     }
 
-    if (internal->merkle_enabled && new_num_chunks < old_num_chunks) {
-        if (raf_merkle_clear_range(&internal->merkle_cfg, new_num_chunks, old_num_chunks - 1) !=
-            0) {
-            return -1;
+    if (internal->merkle_enabled) {
+        if (new_num_chunks < old_num_chunks) {
+            if (raf_merkle_clear_range(&internal->merkle_cfg, new_num_chunks,
+                                       old_num_chunks - 1) != 0) {
+                return -1;
+            }
+        }
+
+        if (size > 0 && new_num_chunks > 0) {
+            last_chunk_idx = new_num_chunks - 1;
+            new_chunk_len  = (size_t) (size - last_chunk_idx * internal->chunk_size);
+
+            if (read_chunk(internal, last_chunk_idx) != 0) {
+                return -1;
+            }
+            if (raf_merkle_update_chunk(&internal->merkle_cfg, internal->chunk_buf, new_chunk_len,
+                                        last_chunk_idx, size) != 0) {
+                return -1;
+            }
         }
     }
 

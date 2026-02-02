@@ -1917,6 +1917,76 @@ test "aegis128l_raf_merkle - truncate shrink clears leaves" {
     aegis.aegis128l_raf_close(&ctx);
 }
 
+test "aegis128l_raf_merkle - truncate within same chunk count rehashes" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var data: [1500]u8 = undefined;
+    for (&data, 0..) |*b, i| {
+        b.* = @truncate(i);
+    }
+
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &data, data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    var root_before_truncate: [MERKLE_HASH_LEN]u8 = undefined;
+    const root1 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&root_before_truncate, root1[0..MERKLE_HASH_LEN]);
+
+    ret = aegis.aegis128l_raf_truncate(&ctx, 1200);
+    try testing.expectEqual(ret, 0);
+
+    var root_after_truncate: [MERKLE_HASH_LEN]u8 = undefined;
+    const root2 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&root_after_truncate, root2[0..MERKLE_HASH_LEN]);
+
+    try testing.expect(!std.mem.eql(u8, &root_before_truncate, &root_after_truncate));
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
 test "aegis128l_raf_merkle - max_chunks exceeded fails" {
     try testing.expectEqual(aegis.aegis_init(), 0);
 
