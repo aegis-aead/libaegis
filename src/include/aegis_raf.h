@@ -131,13 +131,13 @@ typedef struct aegis_raf_rng {
  * buffer on chunk writes. The tree root can be used to verify file integrity
  * without reading all chunks.
  *
+ * user:        User-defined pointer passed to hash callbacks.
  * buf:         Caller-allocated buffer for the Merkle tree. Use
  *              aegis_raf_merkle_buffer_size() to determine required size.
  * len:         Size of the buffer in bytes.
  * hash_len:    Size of each hash in bytes (e.g., 32 for SHA-256).
  * max_chunks:  Maximum number of chunks (leaves) the tree can hold.
  *              Writes exceeding this limit will fail with EOVERFLOW.
- * user:        User-defined pointer passed to hash callbacks.
  *
  * Hash callbacks must return 0 on success, -1 on error.
  *
@@ -162,12 +162,6 @@ typedef struct aegis_raf_rng {
  * serialize writes that share a Merkle buffer, or provide external locking.
  */
 typedef struct aegis_raf_merkle_config {
-    uint8_t *buf;
-    size_t   len;
-    uint32_t hash_len;
-    uint64_t max_chunks;
-    void    *user;
-
     int (*hash_leaf)(void *user, uint8_t *out, size_t out_len, const uint8_t *chunk,
                      size_t chunk_len, uint64_t chunk_idx, uint64_t file_size);
 
@@ -175,6 +169,12 @@ typedef struct aegis_raf_merkle_config {
                        const uint8_t *right, uint32_t level, uint64_t node_idx);
 
     int (*hash_empty)(void *user, uint8_t *out, size_t out_len, uint32_t level, uint64_t node_idx);
+
+    void    *user;
+    uint8_t *buf;
+    size_t   len;
+    uint64_t max_chunks;
+    uint32_t hash_len;
 } aegis_raf_merkle_config;
 
 /*

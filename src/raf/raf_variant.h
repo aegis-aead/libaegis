@@ -810,8 +810,8 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
 
     if (internal->merkle_enabled) {
         if (new_num_chunks < old_num_chunks) {
-            if (raf_merkle_clear_range(&internal->merkle_cfg, new_num_chunks,
-                                       old_num_chunks - 1) != 0) {
+            if (raf_merkle_clear_range(&internal->merkle_cfg, new_num_chunks, old_num_chunks - 1) !=
+                0) {
                 return -1;
             }
         }
