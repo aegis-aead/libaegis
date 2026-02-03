@@ -2274,3 +2274,1429 @@ test "aegis128l_raf_merkle - verify detects corruption" {
 
     aegis.aegis128l_raf_close(&ctx2);
 }
+
+test "aegis_raf_merkle - buffer_size edge cases" {
+    var cfg = aegis.aegis_raf_merkle_config{
+        .buf = null,
+        .len = 0,
+        .hash_len = 0,
+        .max_chunks = 10,
+        .user = null,
+        .hash_leaf = null,
+        .hash_parent = null,
+        .hash_empty = null,
+    };
+    try testing.expectEqual(aegis.aegis_raf_merkle_buffer_size(&cfg), 0);
+
+    cfg.hash_len = 32;
+    cfg.max_chunks = 1;
+    try testing.expectEqual(aegis.aegis_raf_merkle_buffer_size(&cfg), 32); // 1 node
+    cfg.max_chunks = 2;
+    try testing.expectEqual(aegis.aegis_raf_merkle_buffer_size(&cfg), 96); // 2 + 1 = 3 nodes
+    cfg.max_chunks = 3;
+    try testing.expectEqual(aegis.aegis_raf_merkle_buffer_size(&cfg), 192); // 3 + 2 + 1 = 6 nodes
+    cfg.max_chunks = 4;
+    try testing.expectEqual(aegis.aegis_raf_merkle_buffer_size(&cfg), 224); // 4 + 2 + 1 = 7 nodes
+    cfg.max_chunks = 5;
+    try testing.expectEqual(aegis.aegis_raf_merkle_buffer_size(&cfg), 352); // 5 + 3 + 2 + 1 = 11 nodes
+    cfg.max_chunks = 8;
+    try testing.expectEqual(aegis.aegis_raf_merkle_buffer_size(&cfg), 480); // 8 + 4 + 2 + 1 = 15 nodes
+    cfg.max_chunks = 16;
+    try testing.expectEqual(aegis.aegis_raf_merkle_buffer_size(&cfg), 992); // 16 + 8 + 4 + 2 + 1 = 31 nodes
+}
+
+test "aegis128l_raf_merkle - single chunk tree" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 1;
+    var merkle_buf: [64]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    const merkle_buf_size = aegis.aegis_raf_merkle_buffer_size(&merkle_cfg);
+    try testing.expectEqual(merkle_buf_size, MERKLE_HASH_LEN);
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    const test_data = "Single chunk test";
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, test_data.ptr, test_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    const root = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    try testing.expect(root != null);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    var large_data: [2000]u8 = undefined;
+    @memset(&large_data, 0xAB);
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &large_data, large_data.len, 0);
+    try testing.expect(ret != 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - empty file operations" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 4;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    const empty_root = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    try testing.expect(empty_root != null);
+
+    var empty_root_copy: [MERKLE_HASH_LEN]u8 = undefined;
+    @memcpy(&empty_root_copy, empty_root[0..MERKLE_HASH_LEN]);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    const test_data = "Some data";
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, test_data.ptr, test_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_truncate(&ctx, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - determinism same data same root" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file1 = MemoryFile.init(testing.allocator);
+    defer file1.deinit();
+    var file2 = MemoryFile.init(testing.allocator);
+    defer file2.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf1: [256]u8 = undefined;
+    var merkle_buf2: [256]u8 = undefined;
+    @memset(&merkle_buf1, 0);
+    @memset(&merkle_buf2, 0);
+
+    const merkle_cfg1 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf1,
+        .len = merkle_buf1.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    const merkle_cfg2 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf2,
+        .len = merkle_buf2.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg1 = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg1,
+    };
+
+    const cfg2 = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg2,
+    };
+
+    var ctx1: aegis.aegis128l_raf_ctx align(32) = undefined;
+    var ctx2: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx1, &file1.io(), &rng(), &cfg1, &key);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_create(&ctx2, &file2.io(), &rng(), &cfg2, &key);
+    try testing.expectEqual(ret, 0);
+
+    const test_data = "Identical data for both files to test determinism";
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx1, &bytes_written, test_data.ptr, test_data.len, 0);
+    try testing.expectEqual(ret, 0);
+    ret = aegis.aegis128l_raf_write(&ctx2, &bytes_written, test_data.ptr, test_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    const root1 = aegis.aegis_raf_merkle_root(&merkle_cfg1);
+    const root2 = aegis.aegis_raf_merkle_root(&merkle_cfg2);
+    try testing.expectEqualSlices(u8, root1[0..MERKLE_HASH_LEN], root2[0..MERKLE_HASH_LEN]);
+
+    aegis.aegis128l_raf_close(&ctx1);
+    aegis.aegis128l_raf_close(&ctx2);
+}
+
+test "aegis128l_raf_merkle - write spanning multiple chunks" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 16;
+    var merkle_buf: [1024]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var large_data: [5000]u8 = undefined;
+    for (&large_data, 0..) |*b, i| {
+        b.* = @truncate(i *% 17 +% 1);
+    }
+
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &large_data, large_data.len, 0);
+    try testing.expectEqual(ret, 0);
+    try testing.expectEqual(bytes_written, large_data.len);
+
+    const root1 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    var root1_copy: [MERKLE_HASH_LEN]u8 = undefined;
+    @memcpy(&root1_copy, root1[0..MERKLE_HASH_LEN]);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+
+    var merkle_buf2: [1024]u8 = undefined;
+    @memset(&merkle_buf2, 0);
+
+    const merkle_cfg2 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf2,
+        .len = merkle_buf2.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    const cfg2 = aegis.aegis_raf_config{
+        .chunk_size = 0,
+        .flags = 0,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg2,
+    };
+
+    ret = aegis.aegis128l_raf_open(&ctx, &file.io(), &rng(), &cfg2, &key);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_rebuild(&ctx);
+    try testing.expectEqual(ret, 0);
+
+    const root2 = aegis.aegis_raf_merkle_root(&merkle_cfg2);
+    try testing.expectEqualSlices(u8, &root1_copy, root2[0..MERKLE_HASH_LEN]);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - write at chunk boundary" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var chunk_data: [1024]u8 = undefined;
+    @memset(&chunk_data, 0x11);
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &chunk_data, chunk_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    var root_after_chunk0: [MERKLE_HASH_LEN]u8 = undefined;
+    const r1 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&root_after_chunk0, r1[0..MERKLE_HASH_LEN]);
+
+    @memset(&chunk_data, 0x22);
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &chunk_data, chunk_data.len, 1024);
+    try testing.expectEqual(ret, 0);
+
+    var root_after_chunk1: [MERKLE_HASH_LEN]u8 = undefined;
+    const r2 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&root_after_chunk1, r2[0..MERKLE_HASH_LEN]);
+
+    try testing.expect(!std.mem.eql(u8, &root_after_chunk0, &root_after_chunk1));
+
+    @memset(&chunk_data, 0x33);
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &chunk_data, chunk_data.len, 1536);
+    try testing.expectEqual(ret, 0);
+
+    var root_after_spanning: [MERKLE_HASH_LEN]u8 = undefined;
+    const r3 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&root_after_spanning, r3[0..MERKLE_HASH_LEN]);
+
+    try testing.expect(!std.mem.eql(u8, &root_after_chunk1, &root_after_spanning));
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - verify detects corruption in middle chunk" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    var merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var large_data: [4000]u8 = undefined;
+    for (&large_data, 0..) |*b, i| {
+        b.* = @truncate(i);
+    }
+
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &large_data, large_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    const leaf2_offset = 2 * MERKLE_HASH_LEN;
+    merkle_buf[leaf2_offset] ^= 0xFF;
+    merkle_buf[leaf2_offset + 1] ^= 0xFF;
+
+    var corrupted_chunk: u64 = undefined;
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, &corrupted_chunk);
+    try testing.expect(ret != 0);
+    try testing.expectEqual(corrupted_chunk, 2);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - verify detects corruption in last chunk" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    var merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var large_data: [2500]u8 = undefined;
+    for (&large_data, 0..) |*b, i| {
+        b.* = @truncate(i);
+    }
+
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &large_data, large_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    const leaf2_offset = 2 * MERKLE_HASH_LEN;
+    merkle_buf[leaf2_offset] ^= 0xFF;
+
+    var corrupted_chunk: u64 = undefined;
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, &corrupted_chunk);
+    try testing.expect(ret != 0);
+    try testing.expectEqual(corrupted_chunk, 2);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - truncate to zero clears all leaves" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var empty_root: [MERKLE_HASH_LEN]u8 = undefined;
+    const r0 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&empty_root, r0[0..MERKLE_HASH_LEN]);
+
+    var large_data: [5000]u8 = undefined;
+    for (&large_data, 0..) |*b, i| {
+        b.* = @truncate(i);
+    }
+
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &large_data, large_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_truncate(&ctx, 0);
+    try testing.expectEqual(ret, 0);
+
+    var size: u64 = undefined;
+    ret = aegis.aegis128l_raf_get_size(&ctx, &size);
+    try testing.expectEqual(ret, 0);
+    try testing.expectEqual(size, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - truncate preserves earlier chunks" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var large_data: [5000]u8 = undefined;
+    for (&large_data, 0..) |*b, i| {
+        b.* = @truncate(i);
+    }
+
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &large_data, large_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_truncate(&ctx, 2000);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    var read_buf: [2000]u8 = undefined;
+    var bytes_read: usize = undefined;
+    ret = aegis.aegis128l_raf_read(&ctx, &read_buf, &bytes_read, 2000, 0);
+    try testing.expectEqual(ret, 0);
+    try testing.expectEqual(bytes_read, 2000);
+    try testing.expectEqualSlices(u8, large_data[0..2000], &read_buf);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - incremental writes same as bulk" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file1 = MemoryFile.init(testing.allocator);
+    defer file1.deinit();
+    var file2 = MemoryFile.init(testing.allocator);
+    defer file2.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf1: [256]u8 = undefined;
+    var merkle_buf2: [256]u8 = undefined;
+    @memset(&merkle_buf1, 0);
+    @memset(&merkle_buf2, 0);
+
+    const merkle_cfg1 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf1,
+        .len = merkle_buf1.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    const merkle_cfg2 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf2,
+        .len = merkle_buf2.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg1 = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg1,
+    };
+
+    const cfg2 = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg2,
+    };
+
+    var ctx1: aegis.aegis128l_raf_ctx align(32) = undefined;
+    var ctx2: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx1, &file1.io(), &rng(), &cfg1, &key);
+    try testing.expectEqual(ret, 0);
+    ret = aegis.aegis128l_raf_create(&ctx2, &file2.io(), &rng(), &cfg2, &key);
+    try testing.expectEqual(ret, 0);
+
+    var test_data: [3000]u8 = undefined;
+    for (&test_data, 0..) |*b, i| {
+        b.* = @truncate(i *% 7);
+    }
+
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx1, &bytes_written, &test_data, test_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_write(&ctx2, &bytes_written, test_data[0..1000].ptr, 1000, 0);
+    try testing.expectEqual(ret, 0);
+    ret = aegis.aegis128l_raf_write(&ctx2, &bytes_written, test_data[1000..2000].ptr, 1000, 1000);
+    try testing.expectEqual(ret, 0);
+    ret = aegis.aegis128l_raf_write(&ctx2, &bytes_written, test_data[2000..3000].ptr, 1000, 2000);
+    try testing.expectEqual(ret, 0);
+
+    const root1 = aegis.aegis_raf_merkle_root(&merkle_cfg1);
+    const root2 = aegis.aegis_raf_merkle_root(&merkle_cfg2);
+    try testing.expectEqualSlices(u8, root1[0..MERKLE_HASH_LEN], root2[0..MERKLE_HASH_LEN]);
+
+    aegis.aegis128l_raf_close(&ctx1);
+    aegis.aegis128l_raf_close(&ctx2);
+}
+
+test "aegis128l_raf_merkle - overwrite preserves tree consistency" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var data: [3000]u8 = undefined;
+    @memset(&data, 0x11);
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &data, data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    var patch: [500]u8 = undefined;
+    @memset(&patch, 0x22);
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &patch, patch.len, 1200);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    @memset(&patch, 0x33);
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &patch, patch.len, 800);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - non power of 2 chunk count" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 5;
+    var merkle_buf: [512]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var data: [5120]u8 = undefined;
+    for (&data, 0..) |*b, i| {
+        b.* = @truncate(i);
+    }
+
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &data, data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+
+    var merkle_buf2: [512]u8 = undefined;
+    @memset(&merkle_buf2, 0);
+
+    const merkle_cfg2 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf2,
+        .len = merkle_buf2.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    const cfg2 = aegis.aegis_raf_config{
+        .chunk_size = 0,
+        .flags = 0,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg2,
+    };
+
+    ret = aegis.aegis128l_raf_open(&ctx, &file.io(), &rng(), &cfg2, &key);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_rebuild(&ctx);
+    try testing.expectEqual(ret, 0);
+
+    try testing.expectEqualSlices(u8, merkle_buf[0..256], merkle_buf2[0..256]);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - 3 max chunks odd tree" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 3;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var data: [3000]u8 = undefined;
+    for (&data, 0..) |*b, i| {
+        b.* = @truncate(i ^ 0x55);
+    }
+
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &data, data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    var patch: [100]u8 = undefined;
+    @memset(&patch, 0xAA);
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &patch, patch.len, 1100);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - write extending file" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 16;
+    var merkle_buf: [1024]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    const data1 = "First data";
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, data1.ptr, data1.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    var size: u64 = undefined;
+    ret = aegis.aegis128l_raf_get_size(&ctx, &size);
+    try testing.expectEqual(ret, 0);
+    try testing.expectEqual(size, data1.len);
+
+    const data2 = "Extended data";
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, data2.ptr, data2.len, 2048);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_get_size(&ctx, &size);
+    try testing.expectEqual(ret, 0);
+    try testing.expectEqual(size, 2048 + data2.len);
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - buffer too small fails validation" {
+    var small_buf: [10]u8 = undefined;
+    @memset(&small_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &small_buf,
+        .len = small_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = 8,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    const required = aegis.aegis_raf_merkle_buffer_size(&merkle_cfg);
+    try testing.expect(required > small_buf.len);
+}
+
+test "aegis128l_raf_merkle - different data different roots" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 4;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    const data1 = "AAAA";
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, data1.ptr, data1.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    var root1: [MERKLE_HASH_LEN]u8 = undefined;
+    const r1 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&root1, r1[0..MERKLE_HASH_LEN]);
+
+    ret = aegis.aegis128l_raf_truncate(&ctx, 0);
+    try testing.expectEqual(ret, 0);
+
+    const data2 = "BBBB";
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, data2.ptr, data2.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    var root2: [MERKLE_HASH_LEN]u8 = undefined;
+    const r2 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&root2, r2[0..MERKLE_HASH_LEN]);
+
+    try testing.expect(!std.mem.eql(u8, &root1, &root2));
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - single byte change changes root" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 4;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var data: [2000]u8 = undefined;
+    @memset(&data, 0x00);
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &data, data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    var root_before: [MERKLE_HASH_LEN]u8 = undefined;
+    const r1 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&root_before, r1[0..MERKLE_HASH_LEN]);
+
+    const single_byte: [1]u8 = .{0xFF};
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &single_byte, 1, 1500);
+    try testing.expectEqual(ret, 0);
+
+    var root_after: [MERKLE_HASH_LEN]u8 = undefined;
+    const r2 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    @memcpy(&root_after, r2[0..MERKLE_HASH_LEN]);
+
+    try testing.expect(!std.mem.eql(u8, &root_before, &root_after));
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis256_raf_merkle - verify with different AEGIS variant" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis256_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS256_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis256_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis256_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    const test_data = "AEGIS-256 variant test data";
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis256_raf_write(&ctx, &bytes_written, test_data.ptr, test_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis256_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis256_raf_close(&ctx);
+
+    var merkle_buf2: [256]u8 = undefined;
+    @memset(&merkle_buf2, 0);
+
+    const merkle_cfg2 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf2,
+        .len = merkle_buf2.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    const cfg2 = aegis.aegis_raf_config{
+        .chunk_size = 0,
+        .flags = 0,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg2,
+    };
+
+    ret = aegis.aegis256_raf_open(&ctx, &file.io(), &rng(), &cfg2, &key);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis256_raf_merkle_rebuild(&ctx);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis256_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis256_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - root pointer stability" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 4;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    const root1 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    const root2 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    const root3 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+
+    try testing.expectEqual(root1, root2);
+    try testing.expectEqual(root2, root3);
+
+    const test_data = "test";
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, test_data.ptr, test_data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    const root4 = aegis.aegis_raf_merkle_root(&merkle_cfg);
+    try testing.expectEqual(root1, root4);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - exact chunk size writes" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 4;
+    var merkle_buf: [256]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    const merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    const chunk_size = 1024;
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(chunk_size)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = chunk_size,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    var roots: [4][MERKLE_HASH_LEN]u8 = undefined;
+    var chunk_data: [chunk_size]u8 = undefined;
+    var bytes_written: usize = undefined;
+
+    for (0..4) |i| {
+        @memset(&chunk_data, @as(u8, @truncate(i + 1)));
+        ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &chunk_data, chunk_size, @as(u64, i) * chunk_size);
+        try testing.expectEqual(ret, 0);
+        try testing.expectEqual(bytes_written, chunk_size);
+
+        const r = aegis.aegis_raf_merkle_root(&merkle_cfg);
+        @memcpy(&roots[i], r[0..MERKLE_HASH_LEN]);
+
+        if (i > 0) {
+            try testing.expect(!std.mem.eql(u8, &roots[i - 1], &roots[i]));
+        }
+    }
+
+    ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
