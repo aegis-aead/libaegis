@@ -255,6 +255,49 @@ zeroize_scratch_buffers(aegis_raf_ctx_internal *ctx)
 }
 
 static int
+setup_merkle_config(aegis_raf_ctx_internal *ctx, const aegis_raf_merkle_config *merkle,
+                    uint64_t current_file_size, uint32_t chunk_size)
+{
+    uint64_t current_chunks;
+    uint64_t i;
+    int      ret;
+
+    if (merkle == NULL) {
+        ctx->merkle_enabled = 0;
+        memset(&ctx->merkle_cfg, 0, sizeof(ctx->merkle_cfg));
+        return 0;
+    }
+
+    if (aegis_raf_merkle_config_validate(merkle) != 0) {
+        return -1;
+    }
+
+    current_chunks = get_chunk_count(chunk_size, current_file_size);
+    if (current_chunks > merkle->max_chunks) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+
+    ctx->merkle_cfg     = *merkle;
+    ctx->merkle_enabled = 1;
+
+    for (i = 0; i < merkle->max_chunks; i++) {
+        ret = raf_merkle_clear_leaf(&ctx->merkle_cfg, i);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+    if (merkle->max_chunks > 0) {
+        ret = raf_merkle_update_parents(&ctx->merkle_cfg, 0, merkle->max_chunks - 1);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
+static int
 read_chunk(aegis_raf_ctx_internal *ctx, uint64_t chunk_idx)
 {
     uint64_t off      = get_chunk_offset(ctx->chunk_size, chunk_idx);
@@ -409,6 +452,12 @@ FN(create)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
         return -1;
     }
 
+    if (setup_merkle_config(internal, cfg->merkle, 0, internal->chunk_size) != 0) {
+        zeroize_scratch_buffers(internal);
+        memset(internal, 0, sizeof(aegis_raf_ctx_internal));
+        return -1;
+    }
+
     return 0;
 }
 
@@ -488,6 +537,13 @@ FN(open)(CTX_TYPE *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
     }
 
     if (setup_scratch_buffers(internal, cfg->scratch) != 0) {
+        memset(internal, 0, sizeof(aegis_raf_ctx_internal));
+        return -1;
+    }
+
+    if (setup_merkle_config(internal, cfg->merkle, internal->file_size, internal->chunk_size) !=
+        0) {
+        zeroize_scratch_buffers(internal);
         memset(internal, 0, sizeof(aegis_raf_ctx_internal));
         return -1;
     }
@@ -584,6 +640,11 @@ write_impl(aegis_raf_ctx_internal *internal, size_t *bytes_written, const uint8_
         return -1;
     }
 
+    if (internal->merkle_enabled && new_num_chunks > internal->merkle_cfg.max_chunks) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+
     if (new_file_size > internal->file_size) {
         new_backing_size = AEGIS_RAF_HEADER_SIZE + chunks_size;
         if (internal->io.set_size(internal->io.user, new_backing_size) != 0) {
@@ -623,6 +684,13 @@ write_impl(aegis_raf_ctx_internal *internal, size_t *bytes_written, const uint8_
 
             if (write_chunk(internal, internal->chunk_size, ci) != 0) {
                 return -1;
+            }
+
+            if (internal->merkle_enabled) {
+                if (raf_merkle_update_chunk(&internal->merkle_cfg, internal->chunk_buf,
+                                            internal->chunk_size, ci, new_file_size) != 0) {
+                    return -1;
+                }
             }
         }
     }
@@ -666,6 +734,13 @@ write_impl(aegis_raf_ctx_internal *internal, size_t *bytes_written, const uint8_
             return -1;
         }
 
+        if (internal->merkle_enabled) {
+            if (raf_merkle_update_chunk(&internal->merkle_cfg, internal->chunk_buf, chunk_valid_len,
+                                        chunk_idx, effective_file_size) != 0) {
+                return -1;
+            }
+        }
+
         total_written += bytes_to_write;
     }
 
@@ -698,6 +773,7 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
 {
     aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
     size_t                  written;
+    uint64_t                old_num_chunks;
     uint64_t                new_num_chunks;
     uint64_t                rec_size;
     uint64_t                chunks_size;
@@ -711,6 +787,7 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
         return write_impl(internal, &written, NULL, 0, size);
     }
 
+    old_num_chunks = get_chunk_count(internal->chunk_size, internal->file_size);
     new_num_chunks = get_chunk_count(internal->chunk_size, size);
     rec_size       = record_size(internal->chunk_size);
 
@@ -727,6 +804,13 @@ FN(truncate)(CTX_TYPE *ctx, uint64_t size)
 
     if (internal->io.set_size(internal->io.user, new_backing_size) != 0) {
         return -1;
+    }
+
+    if (internal->merkle_enabled && new_num_chunks < old_num_chunks) {
+        if (raf_merkle_clear_range(&internal->merkle_cfg, new_num_chunks, old_num_chunks - 1) !=
+            0) {
+            return -1;
+        }
     }
 
     internal->file_size = size;
@@ -760,6 +844,123 @@ FN(close)(CTX_TYPE *ctx)
     }
     zeroize_scratch_buffers(internal);
     memset(internal, 0, sizeof(aegis_raf_ctx_internal));
+}
+
+int
+FN(merkle_rebuild)(CTX_TYPE *ctx)
+{
+    aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+    uint64_t                num_chunks;
+    uint64_t                ci;
+    size_t                  chunk_len;
+    uint64_t                chunk_end;
+    int                     ret;
+
+    if (!internal->merkle_enabled) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    num_chunks = get_chunk_count(internal->chunk_size, internal->file_size);
+
+    for (ci = 0; ci < num_chunks; ci++) {
+        if (read_chunk(internal, ci) != 0) {
+            return -1;
+        }
+
+        chunk_end = (ci + 1) * internal->chunk_size;
+        if (chunk_end <= internal->file_size) {
+            chunk_len = internal->chunk_size;
+        } else {
+            chunk_len = (size_t) (internal->file_size - ci * internal->chunk_size);
+        }
+
+        ret = raf_merkle_update_leaf(&internal->merkle_cfg, internal->chunk_buf, chunk_len, ci,
+                                     internal->file_size);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    for (ci = num_chunks; ci < internal->merkle_cfg.max_chunks; ci++) {
+        ret = raf_merkle_clear_leaf(&internal->merkle_cfg, ci);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    if (internal->merkle_cfg.max_chunks > 0) {
+        ret = raf_merkle_update_parents(&internal->merkle_cfg, 0,
+                                        internal->merkle_cfg.max_chunks - 1);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    return 0;
+}
+
+int
+FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
+{
+    aegis_raf_ctx_internal *internal = (aegis_raf_ctx_internal *) ctx;
+    uint64_t                num_chunks;
+    uint64_t                ci;
+    size_t                  chunk_len;
+    uint64_t                chunk_end;
+    uint8_t                 computed_hash[256];
+    size_t                  leaf_off;
+    int                     ret;
+
+    if (!internal->merkle_enabled) {
+        errno = ENOTSUP;
+        return -1;
+    }
+
+    if (internal->merkle_cfg.hash_len > sizeof(computed_hash)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    num_chunks = get_chunk_count(internal->chunk_size, internal->file_size);
+
+    for (ci = 0; ci < num_chunks; ci++) {
+        if (read_chunk(internal, ci) != 0) {
+            if (corrupted_chunk != NULL) {
+                *corrupted_chunk = ci;
+            }
+            return -1;
+        }
+
+        chunk_end = (ci + 1) * internal->chunk_size;
+        if (chunk_end <= internal->file_size) {
+            chunk_len = internal->chunk_size;
+        } else {
+            chunk_len = (size_t) (internal->file_size - ci * internal->chunk_size);
+        }
+
+        ret = internal->merkle_cfg.hash_leaf(internal->merkle_cfg.user, computed_hash,
+                                             internal->merkle_cfg.hash_len, internal->chunk_buf,
+                                             chunk_len, ci, internal->file_size);
+        if (ret != 0) {
+            if (corrupted_chunk != NULL) {
+                *corrupted_chunk = ci;
+            }
+            return -1;
+        }
+
+        leaf_off = (size_t) (ci * internal->merkle_cfg.hash_len);
+        if (memcmp(computed_hash, internal->merkle_cfg.buf + leaf_off,
+                   internal->merkle_cfg.hash_len) != 0) {
+            if (corrupted_chunk != NULL) {
+                *corrupted_chunk = ci;
+            }
+            errno = EBADMSG;
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 #undef CONCAT_

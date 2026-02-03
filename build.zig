@@ -86,6 +86,7 @@ pub fn build(b: *std.Build) void {
         "src/raf/raf_aegis256.c",
         "src/raf/raf_aegis256x2.c",
         "src/raf/raf_aegis256x4.c",
+        "src/raf/raf_merkle.c",
     };
 
     lib.root_module.addCSourceFiles(.{ .files = source_files });

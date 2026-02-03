@@ -6,6 +6,7 @@
 
 #include "../common/common.h"
 #include "../include/aegis_raf.h"
+#include "raf_merkle.h"
 
 #ifndef EBADMSG
 #    define EBADMSG 77
@@ -31,6 +32,10 @@
 #    define EOVERFLOW 75
 #endif
 
+#ifndef ENOTSUP
+#    define ENOTSUP 95
+#endif
+
 static const uint8_t AEGIS_RAF_MAGIC[8] = { 'A', 'E', 'G', 'I', 'S', 'R', 'A', 'F' };
 
 #define AEGIS_RAF_VERSION        1
@@ -54,6 +59,9 @@ typedef struct aegis_raf_ctx_internal {
     uint16_t      alg_id;
     size_t        keybytes;
     size_t        npubbytes;
+
+    aegis_raf_merkle_config merkle_cfg;
+    int                     merkle_enabled;
 } aegis_raf_ctx_internal;
 
 #define LOAD64_LE(SRC) load64_le(SRC)
