@@ -215,7 +215,7 @@ int    aegis256x4_raf_scratch_validate(const aegis_raf_scratch *scratch, uint32_
 
 /* Opaque context for AEGIS-128L RAF operations. */
 typedef struct aegis128l_raf_ctx {
-    CRYPTO_ALIGN(32) uint8_t opaque[256];
+    CRYPTO_ALIGN(32) uint8_t opaque[512];
 } aegis128l_raf_ctx;
 
 /*
@@ -284,7 +284,7 @@ void aegis128l_raf_close(aegis128l_raf_ctx *ctx);
 
 /* Opaque context for AEGIS-128X2 RAF operations. See aegis128l_raf_* for API docs. */
 typedef struct aegis128x2_raf_ctx {
-    CRYPTO_ALIGN(32) uint8_t opaque[256];
+    CRYPTO_ALIGN(32) uint8_t opaque[512];
 } aegis128x2_raf_ctx;
 
 int aegis128x2_raf_create(aegis128x2_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
@@ -309,7 +309,7 @@ void aegis128x2_raf_close(aegis128x2_raf_ctx *ctx);
 
 /* Opaque context for AEGIS-128X4 RAF operations. See aegis128l_raf_* for API docs. */
 typedef struct aegis128x4_raf_ctx {
-    CRYPTO_ALIGN(64) uint8_t opaque[256];
+    CRYPTO_ALIGN(64) uint8_t opaque[512];
 } aegis128x4_raf_ctx;
 
 int aegis128x4_raf_create(aegis128x4_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
@@ -334,7 +334,7 @@ void aegis128x4_raf_close(aegis128x4_raf_ctx *ctx);
 
 /* Opaque context for AEGIS-256 RAF operations. Master key is 32 bytes. */
 typedef struct aegis256_raf_ctx {
-    CRYPTO_ALIGN(16) uint8_t opaque[256];
+    CRYPTO_ALIGN(16) uint8_t opaque[512];
 } aegis256_raf_ctx;
 
 int aegis256_raf_create(aegis256_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
@@ -359,7 +359,7 @@ void aegis256_raf_close(aegis256_raf_ctx *ctx);
 
 /* Opaque context for AEGIS-256X2 RAF operations. Master key is 32 bytes. */
 typedef struct aegis256x2_raf_ctx {
-    CRYPTO_ALIGN(32) uint8_t opaque[256];
+    CRYPTO_ALIGN(32) uint8_t opaque[512];
 } aegis256x2_raf_ctx;
 
 int aegis256x2_raf_create(aegis256x2_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
@@ -384,7 +384,7 @@ void aegis256x2_raf_close(aegis256x2_raf_ctx *ctx);
 
 /* Opaque context for AEGIS-256X4 RAF operations. Master key is 32 bytes. */
 typedef struct aegis256x4_raf_ctx {
-    CRYPTO_ALIGN(64) uint8_t opaque[256];
+    CRYPTO_ALIGN(64) uint8_t opaque[512];
 } aegis256x4_raf_ctx;
 
 int aegis256x4_raf_create(aegis256x4_raf_ctx *ctx, const aegis_raf_io *io, const aegis_raf_rng *rng,
