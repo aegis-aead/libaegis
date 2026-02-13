@@ -682,13 +682,17 @@ write_impl(aegis_raf_ctx_internal *internal, size_t *bytes_written, const uint8_
                 memset(internal->chunk_buf + zero_start, 0, zero_end - zero_start);
             }
 
-            if (write_chunk(internal, internal->chunk_size, ci) != 0) {
+            chunk_valid_len = (chunk_end <= new_file_size)
+                                  ? internal->chunk_size
+                                  : (size_t) (new_file_size - chunk_start);
+
+            if (write_chunk(internal, chunk_valid_len, ci) != 0) {
                 return -1;
             }
 
             if (internal->merkle_enabled) {
                 if (raf_merkle_update_chunk(&internal->merkle_cfg, internal->chunk_buf,
-                                            internal->chunk_size, ci, new_file_size) != 0) {
+                                            chunk_valid_len, ci, new_file_size) != 0) {
                     return -1;
                 }
             }

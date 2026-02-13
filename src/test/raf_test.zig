@@ -2956,6 +2956,97 @@ test "aegis128l_raf_merkle - truncate preserves earlier chunks" {
     aegis.aegis128l_raf_close(&ctx);
 }
 
+test "aegis128l_raf_merkle - truncate grow rebuild matches incremental" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 8;
+    var merkle_buf1: [256]u8 = undefined;
+    var merkle_buf2: [256]u8 = undefined;
+    @memset(&merkle_buf1, 0);
+    @memset(&merkle_buf2, 0);
+
+    var merkle_cfg1 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf1,
+        .len = merkle_buf1.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg1 = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg1,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg1, &key);
+    try testing.expectEqual(ret, 0);
+
+    const data = "Hello!";
+    var bytes_written: usize = undefined;
+    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, data.ptr, data.len, 0);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_truncate(&ctx, 2500);
+    try testing.expectEqual(ret, 0);
+
+    var incremental_root: [MERKLE_HASH_LEN]u8 = undefined;
+    const root1 = aegis.aegis_raf_merkle_root(&merkle_cfg1);
+    @memcpy(&incremental_root, root1[0..MERKLE_HASH_LEN]);
+
+    aegis.aegis128l_raf_close(&ctx);
+
+    var merkle_cfg2 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf2,
+        .len = merkle_buf2.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    const cfg2 = aegis.aegis_raf_config{
+        .chunk_size = 0,
+        .flags = 0,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg2,
+    };
+
+    ret = aegis.aegis128l_raf_open(&ctx, &file.io(), &rng(), &cfg2, &key);
+    try testing.expectEqual(ret, 0);
+
+    ret = aegis.aegis128l_raf_merkle_rebuild(&ctx);
+    try testing.expectEqual(ret, 0);
+
+    var rebuilt_root: [MERKLE_HASH_LEN]u8 = undefined;
+    const root2 = aegis.aegis_raf_merkle_root(&merkle_cfg2);
+    @memcpy(&rebuilt_root, root2[0..MERKLE_HASH_LEN]);
+
+    try testing.expectEqualSlices(u8, &incremental_root, &rebuilt_root);
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
 test "aegis128l_raf_merkle - incremental writes same as bulk" {
     try testing.expectEqual(aegis.aegis_init(), 0);
 
