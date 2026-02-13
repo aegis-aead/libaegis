@@ -7,21 +7,22 @@ uint64_t
 raf_merkle_level_node_count(uint64_t max_chunks, uint32_t level)
 {
     uint64_t count = max_chunks;
-    uint32_t i;
+    uint32_t i = 0;
 
     if (max_chunks == 0) {
         return 0;
     }
 
-    for (i = 0; i < level && count > 1; i++) {
+    while (1) {
+        if (i == level) {
+            return count;
+        }
+        if (count <= 1) {
+            return 0;
+        }
         count = (count + 1) / 2;
+        i++;
     }
-
-    if (level > 0 && count == max_chunks) {
-        return 0;
-    }
-
-    return count;
 }
 
 static uint32_t
