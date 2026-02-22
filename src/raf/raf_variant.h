@@ -929,28 +929,54 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
     uint64_t                ci;
     size_t                  chunk_len;
     uint64_t                chunk_end;
-    uint8_t                 computed_hash[256];
+    uint64_t                level_count;
+    uint32_t                level;
+    uint64_t                parent_count;
+    uint64_t                i;
     size_t                  leaf_off;
-    int                     ret;
+    size_t                  left_off;
+    size_t                  right_off;
+    size_t                  parent_off;
+    const uint8_t          *stored_root;
+    uint8_t                *computed_hash;
+    uint8_t                *empty_hash;
+    int                     ret = 0;
 
     if (!internal->merkle_enabled) {
         errno = ENOTSUP;
         return -1;
     }
 
-    if (internal->merkle_cfg.hash_len > sizeof(computed_hash)) {
-        errno = EINVAL;
-        return -1;
+#if defined(__wasm__) && !defined(__wasi__)
+    computed_hash = (uint8_t *) __builtin_alloca(internal->merkle_cfg.hash_len);
+    empty_hash    = (uint8_t *) __builtin_alloca(internal->merkle_cfg.hash_len);
+#else
+    computed_hash = (uint8_t *) malloc(internal->merkle_cfg.hash_len);
+    empty_hash    = (uint8_t *) malloc(internal->merkle_cfg.hash_len);
+    if (computed_hash == NULL || empty_hash == NULL) {
+        errno = ENOMEM;
+        ret   = -1;
+        goto cleanup;
     }
+#endif
 
     num_chunks = get_chunk_count(internal->chunk_size, internal->file_size);
+    if (num_chunks > internal->merkle_cfg.max_chunks) {
+        if (corrupted_chunk != NULL) {
+            *corrupted_chunk = UINT64_MAX;
+        }
+        errno = EOVERFLOW;
+        ret   = -1;
+        goto cleanup;
+    }
 
     for (ci = 0; ci < num_chunks; ci++) {
         if (read_chunk(internal, ci) != 0) {
             if (corrupted_chunk != NULL) {
                 *corrupted_chunk = ci;
             }
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
 
         chunk_end = (ci + 1) * internal->chunk_size;
@@ -967,7 +993,7 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
             if (corrupted_chunk != NULL) {
                 *corrupted_chunk = ci;
             }
-            return -1;
+            goto cleanup;
         }
 
         leaf_off = (size_t) (ci * internal->merkle_cfg.hash_len);
@@ -977,11 +1003,109 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
                 *corrupted_chunk = ci;
             }
             errno = EBADMSG;
-            return -1;
+            ret = -1;
+            goto cleanup;
         }
     }
 
-    return 0;
+    for (ci = num_chunks; ci < internal->merkle_cfg.max_chunks; ci++) {
+        ret = internal->merkle_cfg.hash_empty(internal->merkle_cfg.user, computed_hash,
+                                              internal->merkle_cfg.hash_len, 0, ci);
+        if (ret != 0) {
+            if (corrupted_chunk != NULL) {
+                *corrupted_chunk = ci;
+            }
+            goto cleanup;
+        }
+
+        leaf_off = (size_t) (ci * internal->merkle_cfg.hash_len);
+        if (memcmp(computed_hash, internal->merkle_cfg.buf + leaf_off,
+                   internal->merkle_cfg.hash_len) != 0) {
+            if (corrupted_chunk != NULL) {
+                *corrupted_chunk = ci;
+            }
+            errno = EBADMSG;
+            ret   = -1;
+            goto cleanup;
+        }
+    }
+
+    level_count = internal->merkle_cfg.max_chunks;
+    for (level = 0; level_count > 1; level++) {
+        parent_count = (level_count + 1) / 2;
+
+        for (i = 0; i < parent_count; i++) {
+            uint64_t left_child  = i * 2;
+            uint64_t right_child = left_child + 1;
+
+            left_off =
+                raf_merkle_node_offset(internal->merkle_cfg.max_chunks, internal->merkle_cfg.hash_len,
+                                       level, left_child);
+
+            if (right_child < level_count) {
+                right_off = raf_merkle_node_offset(internal->merkle_cfg.max_chunks,
+                                                   internal->merkle_cfg.hash_len, level,
+                                                   right_child);
+                ret = internal->merkle_cfg.hash_parent(
+                    internal->merkle_cfg.user, computed_hash, internal->merkle_cfg.hash_len,
+                    internal->merkle_cfg.buf + left_off, internal->merkle_cfg.buf + right_off, level,
+                    i);
+            } else {
+                ret = internal->merkle_cfg.hash_empty(internal->merkle_cfg.user, empty_hash,
+                                                      internal->merkle_cfg.hash_len, level,
+                                                      right_child);
+                if (ret != 0) {
+                    goto cleanup;
+                }
+                ret = internal->merkle_cfg.hash_parent(
+                    internal->merkle_cfg.user, computed_hash, internal->merkle_cfg.hash_len,
+                    internal->merkle_cfg.buf + left_off, empty_hash, level, i);
+            }
+            if (ret != 0) {
+                goto cleanup;
+            }
+
+            parent_off =
+                raf_merkle_node_offset(internal->merkle_cfg.max_chunks, internal->merkle_cfg.hash_len,
+                                       level + 1, i);
+            if (memcmp(computed_hash, internal->merkle_cfg.buf + parent_off,
+                       internal->merkle_cfg.hash_len) != 0) {
+                if (corrupted_chunk != NULL) {
+                    *corrupted_chunk = UINT64_MAX;
+                }
+                errno = EBADMSG;
+                ret   = -1;
+                goto cleanup;
+            }
+        }
+
+        level_count = parent_count;
+    }
+
+    stored_root = aegis_raf_merkle_root(&internal->merkle_cfg);
+    if (stored_root == NULL) {
+        if (corrupted_chunk != NULL) {
+            *corrupted_chunk = UINT64_MAX;
+        }
+        errno = EINVAL;
+        ret   = -1;
+        goto cleanup;
+    }
+    if (memcmp(computed_hash, stored_root, internal->merkle_cfg.hash_len) != 0) {
+        if (corrupted_chunk != NULL) {
+            *corrupted_chunk = UINT64_MAX;
+        }
+        errno = EBADMSG;
+        ret   = -1;
+        goto cleanup;
+    }
+
+cleanup:
+#if !(defined(__wasm__) && !defined(__wasi__))
+    free(computed_hash);
+    free(empty_hash);
+#endif
+    return ret;
 }
 
 #undef CONCAT_
