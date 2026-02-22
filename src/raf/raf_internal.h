@@ -57,6 +57,7 @@ typedef struct aegis_raf_ctx_internal {
     uint64_t      file_size;
     uint32_t      chunk_size;
     uint16_t      alg_id;
+    uint16_t      version;
     size_t        keybytes;
     size_t        npubbytes;
 
@@ -131,6 +132,19 @@ build_aad(uint8_t aad[44], const uint8_t file_id[32], uint64_t chunk_idx, uint32
     memcpy(aad, file_id, 32);
     STORE64_LE(aad + 32, chunk_idx);
     STORE32_LE(aad + 40, chunk_size);
+}
+
+static inline void
+build_commitment_context(uint8_t out[AEGIS_RAF_COMMITMENT_CONTEXT_BYTES],
+                         uint16_t version,
+                         uint16_t alg_id,
+                         uint32_t chunk_size,
+                         const uint8_t file_id[AEGIS_RAF_FILE_ID_BYTES])
+{
+    STORE16_LE(out, version);
+    STORE16_LE(out + 2, alg_id);
+    STORE32_LE(out + 4, chunk_size);
+    memcpy(out + 8, file_id, AEGIS_RAF_FILE_ID_BYTES);
 }
 
 #endif

@@ -43,13 +43,12 @@ size_t raf_merkle_node_offset(uint64_t max_chunks, uint32_t hash_len, uint32_t l
  * chunk_data:    Plaintext chunk contents (may be less than chunk_size for final chunk).
  * chunk_len:     Actual length of chunk data (plaintext bytes in this chunk).
  * chunk_idx:     Index of the chunk (0-based).
- * file_size:     Current file size (for domain separation).
  * cfg:           Merkle configuration with buffer and callbacks.
  *
  * Returns 0 on success, -1 on error.
  */
 int raf_merkle_update_leaf(const aegis_raf_merkle_config *cfg, const uint8_t *chunk_data,
-                           size_t chunk_len, uint64_t chunk_idx, uint64_t file_size);
+                           size_t chunk_len, uint64_t chunk_idx);
 
 /*
  * Mark a leaf as empty. Computes hash_empty for the given chunk index and
@@ -82,7 +81,7 @@ int raf_merkle_update_parents(const aegis_raf_merkle_config *cfg, uint64_t first
  * Returns 0 on success, -1 on error.
  */
 int raf_merkle_update_chunk(const aegis_raf_merkle_config *cfg, const uint8_t *chunk_data,
-                            size_t chunk_len, uint64_t chunk_idx, uint64_t file_size);
+                            size_t chunk_len, uint64_t chunk_idx);
 
 /*
  * Clear a range of leaves (mark as empty) and propagate changes to the root.

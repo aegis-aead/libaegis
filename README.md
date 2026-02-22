@@ -105,8 +105,10 @@ RAF supports an optional Merkle tree that tracks per-chunk integrity. The tree i
 Leaf values come from your `hash_leaf` callback over plaintext chunk data. They are not the RAF per-chunk AEAD authentication tags.
 Keep leaf hashing stable by depending on `chunk`, `chunk_len`, and `chunk_idx`.
 
-`aegis_raf_merkle_root()` returns a size-bound commitment derived from the
-structural tree root and `file_size` via `hash_commitment`.
+`aegis128l_raf_merkle_commitment()` returns a context-bound commitment that
+includes the file's version, algorithm, chunk size, and identity alongside
+the structural tree root and file size. This is the recommended API for
+RAF files.
 
 ```c
 // Provide hash callbacks and a caller-allocated buffer
@@ -114,7 +116,7 @@ aegis_raf_merkle_config merkle = {
     .hash_leaf       = my_hash_leaf,       // hash plaintext chunk data (not the RAF auth tag)
     .hash_parent     = my_hash_parent,     // combine two child digests
     .hash_empty      = my_hash_empty,      // digest for missing/empty nodes
-    .hash_commitment = my_hash_commitment, // hash(tree_root, file_size)
+    .hash_commitment = my_hash_commitment, // hash(root, ctx, file_size)
     .hash_len        = 32,                 // digest size (8..64 bytes)
     .max_chunks      = 1024,
     .buf             = merkle_buf,
@@ -127,12 +129,17 @@ aegis_raf_config cfg = {
     .flags = AEGIS_RAF_CREATE, .merkle = &merkle,
 };
 
-// After writes, verify integrity or read the size-bound root commitment
+// After writes, verify integrity or read the root commitment
 aegis128l_raf_merkle_verify(&ctx, &corrupted_chunk);
-const uint8_t *root = aegis_raf_merkle_root(&merkle);
+uint8_t root[32];
+aegis128l_raf_merkle_commitment(&ctx, root, sizeof root);
 ```
 
-The tree uses a flat buffer layout with configurable hash callbacks, so it works with any hash function. `aegis_raf_merkle_buffer_size()` computes the required buffer size for a given `max_chunks` and `hash_len` (including the exported commitment slot).
+`aegis_raf_merkle_root()` is also available for standalone Merkle usage
+without a RAF context, where the caller supplies their own context bytes
+for domain separation.
+
+The tree uses a flat buffer layout with configurable hash callbacks, so it works with any hash function. `aegis_raf_merkle_buffer_size()` computes the required buffer size for a given `max_chunks` and `hash_len`.
 
 ## Bindings
 

@@ -119,20 +119,42 @@ aegis_raf_merkle_leaf_offset(const aegis_raf_merkle_config *cfg, uint64_t chunk_
     return (size_t) (chunk_idx * cfg->hash_len);
 }
 
-const uint8_t *
-aegis_raf_merkle_root(const aegis_raf_merkle_config *cfg)
+int
+aegis_raf_merkle_root(const aegis_raf_merkle_config *cfg,
+                      uint8_t *out, size_t out_len,
+                      const uint8_t *ctx, size_t ctx_len,
+                      uint64_t file_size)
 {
-    uint32_t levels;
-    size_t   root_offset;
+    uint32_t       levels;
+    size_t         root_offset;
+    const uint8_t *structural_root;
 
     if (cfg == NULL || cfg->buf == NULL || cfg->max_chunks == 0) {
-        return NULL;
+        errno = EINVAL;
+        return -1;
+    }
+    if (out == NULL || out_len < cfg->hash_len) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (cfg->hash_commitment == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ctx == NULL && ctx_len > 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ctx_len == 0) {
+        ctx = NULL;
     }
 
-    levels      = aegis_raf_merkle_level_count(cfg);
-    root_offset = raf_merkle_level_offset(cfg->max_chunks, cfg->hash_len, levels - 1);
+    levels          = aegis_raf_merkle_level_count(cfg);
+    root_offset     = raf_merkle_level_offset(cfg->max_chunks, cfg->hash_len, levels - 1);
+    structural_root = cfg->buf + root_offset;
 
-    return cfg->buf + root_offset;
+    return cfg->hash_commitment(cfg->user, out, cfg->hash_len,
+                                structural_root, ctx, ctx_len, file_size);
 }
 
 int
@@ -155,7 +177,8 @@ aegis_raf_merkle_config_validate(const aegis_raf_merkle_config *cfg)
         return -1;
     }
 
-    if (cfg->hash_leaf == NULL || cfg->hash_parent == NULL || cfg->hash_empty == NULL) {
+    if (cfg->hash_leaf == NULL || cfg->hash_parent == NULL || cfg->hash_empty == NULL ||
+        cfg->hash_commitment == NULL) {
         errno = EINVAL;
         return -1;
     }
@@ -171,7 +194,7 @@ aegis_raf_merkle_config_validate(const aegis_raf_merkle_config *cfg)
 
 int
 raf_merkle_update_leaf(const aegis_raf_merkle_config *cfg, const uint8_t *chunk_data,
-                       size_t chunk_len, uint64_t chunk_idx, uint64_t file_size)
+                       size_t chunk_len, uint64_t chunk_idx)
 {
     size_t leaf_off;
 
@@ -183,7 +206,7 @@ raf_merkle_update_leaf(const aegis_raf_merkle_config *cfg, const uint8_t *chunk_
     leaf_off = aegis_raf_merkle_leaf_offset(cfg, chunk_idx);
 
     return cfg->hash_leaf(cfg->user, cfg->buf + leaf_off, cfg->hash_len, chunk_data, chunk_len,
-                          chunk_idx, file_size);
+                          chunk_idx);
 }
 
 int
@@ -273,11 +296,11 @@ raf_merkle_update_parents(const aegis_raf_merkle_config *cfg, uint64_t first_chu
 
 int
 raf_merkle_update_chunk(const aegis_raf_merkle_config *cfg, const uint8_t *chunk_data,
-                        size_t chunk_len, uint64_t chunk_idx, uint64_t file_size)
+                        size_t chunk_len, uint64_t chunk_idx)
 {
     int ret;
 
-    ret = raf_merkle_update_leaf(cfg, chunk_data, chunk_len, chunk_idx, file_size);
+    ret = raf_merkle_update_leaf(cfg, chunk_data, chunk_len, chunk_idx);
     if (ret != 0) {
         return ret;
     }
