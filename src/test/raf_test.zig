@@ -4077,3 +4077,1043 @@ test "aegis128l_raf_merkle - exact chunk size writes" {
 
     aegis.aegis128l_raf_close(&ctx);
 }
+
+const FuzzOp = enum(u8) {
+    write_sequential,
+    write_random_offset,
+    write_cross_chunk,
+    write_gap,
+    write_exact_chunk,
+    write_single_byte,
+    read_and_verify,
+    truncate_shrink,
+    truncate_grow,
+    truncate_zero,
+    truncate_within_chunk,
+    overwrite_partial,
+    reopen_and_rebuild,
+    verify_merkle,
+};
+
+const FuzzState = struct {
+    shadow: std.ArrayListUnmanaged(u8),
+    file: *MemoryFile,
+    ctx: aegis.aegis128l_raf_ctx align(32),
+    merkle_buf: [4096]u8,
+    merkle_cfg: aegis.aegis_raf_merkle_config,
+    scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN),
+    key: [aegis.aegis128l_KEYBYTES]u8,
+    is_open: bool,
+    chunk_size: u32,
+    max_chunks: u64,
+    allocator: std.mem.Allocator,
+
+    fn init(allocator: std.mem.Allocator, file: *MemoryFile, rand: std.Random) FuzzState {
+        var state: FuzzState = undefined;
+        state.allocator = allocator;
+        state.file = file;
+        state.shadow = .{};
+        state.is_open = false;
+        state.chunk_size = 1024;
+        state.max_chunks = 32;
+        rand.bytes(&state.key);
+        @memset(&state.merkle_buf, 0);
+        return state;
+    }
+
+    fn deinit(self: *FuzzState) void {
+        if (self.is_open) {
+            aegis.aegis128l_raf_close(&self.ctx);
+            self.is_open = false;
+        }
+        self.shadow.deinit(self.allocator);
+    }
+
+    fn create(self: *FuzzState) !void {
+        if (self.is_open) {
+            aegis.aegis128l_raf_close(&self.ctx);
+            self.is_open = false;
+        }
+        self.shadow.clearRetainingCapacity();
+        @memset(&self.merkle_buf, 0);
+
+        self.merkle_cfg = .{
+            .buf = &self.merkle_buf,
+            .len = self.merkle_buf.len,
+            .hash_len = MERKLE_HASH_LEN,
+            .max_chunks = self.max_chunks,
+            .user = null,
+            .hash_leaf = xorHashLeaf,
+            .hash_parent = xorHashParent,
+            .hash_empty = xorHashEmpty,
+        };
+
+        const scratch = aegis.aegis_raf_scratch{
+            .buf = &self.scratch_buf,
+            .len = self.scratch_buf.len,
+        };
+
+        const cfg = aegis.aegis_raf_config{
+            .chunk_size = self.chunk_size,
+            .flags = aegis.AEGIS_RAF_CREATE | aegis.AEGIS_RAF_TRUNCATE,
+            .scratch = &scratch,
+            .merkle = &self.merkle_cfg,
+        };
+
+        const ret = aegis.aegis128l_raf_create(&self.ctx, &self.file.io(), &rng(), &cfg, &self.key);
+        try testing.expectEqual(ret, 0);
+        self.is_open = true;
+    }
+
+    fn reopen(self: *FuzzState) !void {
+        if (self.is_open) {
+            aegis.aegis128l_raf_close(&self.ctx);
+            self.is_open = false;
+        }
+
+        var old_root: [MERKLE_HASH_LEN]u8 = undefined;
+        const rp = aegis.aegis_raf_merkle_root(&self.merkle_cfg);
+        @memcpy(&old_root, rp[0..MERKLE_HASH_LEN]);
+
+        @memset(&self.merkle_buf, 0);
+        self.merkle_cfg = .{
+            .buf = &self.merkle_buf,
+            .len = self.merkle_buf.len,
+            .hash_len = MERKLE_HASH_LEN,
+            .max_chunks = self.max_chunks,
+            .user = null,
+            .hash_leaf = xorHashLeaf,
+            .hash_parent = xorHashParent,
+            .hash_empty = xorHashEmpty,
+        };
+
+        const scratch = aegis.aegis_raf_scratch{
+            .buf = &self.scratch_buf,
+            .len = self.scratch_buf.len,
+        };
+
+        const cfg = aegis.aegis_raf_config{
+            .chunk_size = 0,
+            .flags = 0,
+            .scratch = &scratch,
+            .merkle = &self.merkle_cfg,
+        };
+
+        var ret = aegis.aegis128l_raf_open(&self.ctx, &self.file.io(), &rng(), &cfg, &self.key);
+        try testing.expectEqual(ret, 0);
+        self.is_open = true;
+
+        ret = aegis.aegis128l_raf_merkle_rebuild(&self.ctx);
+        try testing.expectEqual(ret, 0);
+
+        const new_root = aegis.aegis_raf_merkle_root(&self.merkle_cfg);
+        try testing.expectEqualSlices(u8, &old_root, new_root[0..MERKLE_HASH_LEN]);
+    }
+
+    fn doWrite(self: *FuzzState, data: []const u8, offset: u64) !void {
+        if (!self.is_open) return;
+
+        const end = offset + data.len;
+        const new_num_chunks = (end + self.chunk_size - 1) / self.chunk_size;
+        if (new_num_chunks > self.max_chunks) return;
+
+        var bytes_written: usize = undefined;
+        const ret = aegis.aegis128l_raf_write(&self.ctx, &bytes_written, data.ptr, data.len, offset);
+        try testing.expectEqual(ret, 0);
+        try testing.expectEqual(bytes_written, data.len);
+
+        const end_usize = @as(usize, @intCast(end));
+        const off_usize = @as(usize, @intCast(offset));
+        if (end_usize > self.shadow.items.len) {
+            const old_len = self.shadow.items.len;
+            self.shadow.resize(self.allocator, end_usize) catch unreachable;
+            if (old_len < off_usize) {
+                @memset(self.shadow.items[old_len..off_usize], 0);
+            }
+        }
+        @memcpy(self.shadow.items[off_usize..end_usize], data);
+    }
+
+    fn doRead(self: *FuzzState) !void {
+        if (!self.is_open) return;
+        if (self.shadow.items.len == 0) return;
+
+        var read_buf: [8192]u8 = undefined;
+        const len = @min(self.shadow.items.len, read_buf.len);
+        var bytes_read: usize = undefined;
+        const ret = aegis.aegis128l_raf_read(&self.ctx, &read_buf, &bytes_read, len, 0);
+        try testing.expectEqual(ret, 0);
+        try testing.expectEqual(bytes_read, len);
+        try testing.expectEqualSlices(u8, self.shadow.items[0..len], read_buf[0..len]);
+    }
+
+    fn doTruncate(self: *FuzzState, new_size: u64) !void {
+        if (!self.is_open) return;
+
+        const new_num_chunks = if (new_size == 0) 0 else (new_size + self.chunk_size - 1) / self.chunk_size;
+        if (new_num_chunks > self.max_chunks) return;
+
+        const ret = aegis.aegis128l_raf_truncate(&self.ctx, new_size);
+        try testing.expectEqual(ret, 0);
+
+        const ns = @as(usize, @intCast(new_size));
+        if (ns < self.shadow.items.len) {
+            self.shadow.shrinkRetainingCapacity(ns);
+        } else if (ns > self.shadow.items.len) {
+            const old_len = self.shadow.items.len;
+            self.shadow.resize(self.allocator, ns) catch unreachable;
+            @memset(self.shadow.items[old_len..], 0);
+        }
+    }
+
+    fn verifySize(self: *FuzzState) !void {
+        if (!self.is_open) return;
+        var size: u64 = undefined;
+        const ret = aegis.aegis128l_raf_get_size(&self.ctx, &size);
+        try testing.expectEqual(ret, 0);
+        try testing.expectEqual(size, self.shadow.items.len);
+    }
+
+    fn verifyMerkle(self: *FuzzState) !void {
+        if (!self.is_open) return;
+        const ret = aegis.aegis128l_raf_merkle_verify(&self.ctx, null);
+        try testing.expectEqual(ret, 0);
+    }
+};
+
+test "fuzz - random RAF operations with merkle" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var state = FuzzState.init(testing.allocator, &file, rand);
+    defer state.deinit();
+    try state.create();
+
+    const num_iterations = 500;
+
+    for (0..num_iterations) |_| {
+        const op: FuzzOp = rand.enumValue(FuzzOp);
+
+        switch (op) {
+            .write_sequential => {
+                var buf: [256]u8 = undefined;
+                const len = rand.intRangeAtMost(usize, 1, buf.len);
+                rand.bytes(buf[0..len]);
+                const offset = state.shadow.items.len;
+                try state.doWrite(buf[0..len], @intCast(offset));
+            },
+            .write_random_offset => {
+                var buf: [200]u8 = undefined;
+                const len = rand.intRangeAtMost(usize, 1, buf.len);
+                rand.bytes(buf[0..len]);
+                const max_off = @as(u64, state.max_chunks) * state.chunk_size;
+                const offset = rand.intRangeLessThan(u64, 0, max_off - len);
+                try state.doWrite(buf[0..len], offset);
+            },
+            .write_cross_chunk => {
+                if (state.shadow.items.len < state.chunk_size) {
+                    var buf: [300]u8 = undefined;
+                    rand.bytes(&buf);
+                    try state.doWrite(&buf, 0);
+                    continue;
+                }
+                var buf: [300]u8 = undefined;
+                const len = rand.intRangeAtMost(usize, 2, buf.len);
+                rand.bytes(buf[0..len]);
+                const cs = @as(u64, state.chunk_size);
+                const num_chunks = (state.shadow.items.len + cs - 1) / cs;
+                if (num_chunks < 2) continue;
+                const boundary = rand.intRangeAtMost(u64, 1, num_chunks - 1) * cs;
+                const half: u64 = @intCast(len / 2);
+                const offset = if (boundary > half) boundary - half else 0;
+                try state.doWrite(buf[0..len], offset);
+            },
+            .write_gap => {
+                var buf: [64]u8 = undefined;
+                const len = rand.intRangeAtMost(usize, 1, buf.len);
+                rand.bytes(buf[0..len]);
+                const gap_start: u64 = @intCast(state.shadow.items.len);
+                const gap = rand.intRangeAtMost(u64, 1, 2 * state.chunk_size);
+                const offset = gap_start + gap;
+                try state.doWrite(buf[0..len], offset);
+            },
+            .write_exact_chunk => {
+                var buf: [1024]u8 = undefined;
+                rand.bytes(&buf);
+                const cs = @as(u64, state.chunk_size);
+                const num_chunks = (state.shadow.items.len + cs - 1) / cs;
+                const chunk_idx = if (num_chunks > 0)
+                    rand.intRangeLessThan(u64, 0, @min(num_chunks + 1, state.max_chunks))
+                else
+                    0;
+                try state.doWrite(&buf, chunk_idx * cs);
+            },
+            .write_single_byte => {
+                var buf: [1]u8 = undefined;
+                rand.bytes(&buf);
+                const max_off = @as(u64, @intCast(state.shadow.items.len));
+                const offset = if (max_off > 0) rand.intRangeLessThan(u64, 0, max_off) else 0;
+                try state.doWrite(&buf, offset);
+            },
+            .read_and_verify => {
+                try state.doRead();
+                try state.verifySize();
+            },
+            .truncate_shrink => {
+                if (state.shadow.items.len > 0) {
+                    const new_size = rand.intRangeLessThan(u64, 0, @intCast(state.shadow.items.len));
+                    try state.doTruncate(new_size);
+                }
+            },
+            .truncate_grow => {
+                const current = @as(u64, @intCast(state.shadow.items.len));
+                const grow = rand.intRangeAtMost(u64, 1, state.chunk_size);
+                try state.doTruncate(current + grow);
+            },
+            .truncate_zero => {
+                try state.doTruncate(0);
+            },
+            .truncate_within_chunk => {
+                if (state.shadow.items.len > 0) {
+                    const cs = @as(u64, state.chunk_size);
+                    const current: u64 = @intCast(state.shadow.items.len);
+                    const current_chunk = (current + cs - 1) / cs;
+                    if (current_chunk > 0) {
+                        const chunk_start = (current_chunk - 1) * cs;
+                        const new_size = chunk_start + rand.intRangeAtMost(u64, 1, cs - 1);
+                        try state.doTruncate(@min(new_size, current));
+                    }
+                }
+            },
+            .overwrite_partial => {
+                if (state.shadow.items.len >= 2) {
+                    var buf: [100]u8 = undefined;
+                    const max_len = @min(buf.len, state.shadow.items.len);
+                    const len = rand.intRangeAtMost(usize, 1, max_len);
+                    rand.bytes(buf[0..len]);
+                    const max_off = state.shadow.items.len - len;
+                    const offset = rand.intRangeLessThan(u64, 0, @intCast(max_off + 1));
+                    try state.doWrite(buf[0..len], offset);
+                }
+            },
+            .reopen_and_rebuild => {
+                if (state.shadow.items.len > 0) {
+                    try state.verifyMerkle();
+                    try state.reopen();
+                    try state.doRead();
+                }
+            },
+            .verify_merkle => {
+                try state.verifyMerkle();
+            },
+        }
+
+        if (rand.intRangeLessThan(u8, 0, 4) == 0) {
+            try state.verifyMerkle();
+        }
+    }
+
+    try state.doRead();
+    try state.verifySize();
+    try state.verifyMerkle();
+}
+
+test "fuzz - rapid write-truncate cycles with merkle" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var state = FuzzState.init(testing.allocator, &file, rand);
+    defer state.deinit();
+    try state.create();
+
+    for (0..200) |_| {
+        var buf: [512]u8 = undefined;
+        const len = rand.intRangeAtMost(usize, 1, buf.len);
+        rand.bytes(buf[0..len]);
+        const offset = rand.intRangeLessThan(u64, 0, 4096);
+        try state.doWrite(buf[0..len], offset);
+
+        if (rand.boolean()) {
+            const cur: u64 = @intCast(state.shadow.items.len);
+            if (cur > 0) {
+                const new_size = rand.intRangeLessThan(u64, 0, cur + 1);
+                try state.doTruncate(new_size);
+            }
+        }
+
+        try state.verifyMerkle();
+    }
+
+    try state.doRead();
+    try state.verifySize();
+}
+
+test "fuzz - gap fill stress with merkle" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var state = FuzzState.init(testing.allocator, &file, rand);
+    defer state.deinit();
+    try state.create();
+
+    for (0..100) |i| {
+        const gap: u64 = rand.intRangeAtMost(u64, 0, 3 * state.chunk_size);
+        const offset: u64 = @as(u64, @intCast(state.shadow.items.len)) + gap;
+        const end = offset + 64;
+        const max = @as(u64, state.max_chunks) * state.chunk_size;
+        if (end > max) continue;
+
+        var buf: [64]u8 = undefined;
+        @memset(&buf, @as(u8, @truncate(i)));
+        try state.doWrite(&buf, offset);
+        try state.verifyMerkle();
+    }
+
+    try state.reopen();
+    try state.verifyMerkle();
+    try state.doRead();
+}
+
+test "fuzz - incremental vs rebuild consistency" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var state = FuzzState.init(testing.allocator, &file, rand);
+    defer state.deinit();
+    try state.create();
+
+    for (0..50) |_| {
+        var buf: [300]u8 = undefined;
+        const len = rand.intRangeAtMost(usize, 1, buf.len);
+        rand.bytes(buf[0..len]);
+        const max_off = @as(u64, state.max_chunks) * state.chunk_size;
+        if (max_off <= len) continue;
+        const offset = rand.intRangeLessThan(u64, 0, max_off - len);
+        try state.doWrite(buf[0..len], offset);
+    }
+
+    try state.verifyMerkle();
+
+    var incremental_root: [MERKLE_HASH_LEN]u8 = undefined;
+    const rp = aegis.aegis_raf_merkle_root(&state.merkle_cfg);
+    @memcpy(&incremental_root, rp[0..MERKLE_HASH_LEN]);
+
+    try state.reopen();
+
+    const rebuilt_root = aegis.aegis_raf_merkle_root(&state.merkle_cfg);
+    try testing.expectEqualSlices(u8, &incremental_root, rebuilt_root[0..MERKLE_HASH_LEN]);
+    try state.verifyMerkle();
+}
+
+test "fuzz - write-read data integrity across reopens" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var state = FuzzState.init(testing.allocator, &file, rand);
+    defer state.deinit();
+    try state.create();
+
+    for (0..30) |_| {
+        var buf: [500]u8 = undefined;
+        const len = rand.intRangeAtMost(usize, 1, buf.len);
+        rand.bytes(buf[0..len]);
+
+        const max_off = @as(u64, state.max_chunks) * state.chunk_size;
+        if (max_off <= len) continue;
+        const offset = rand.intRangeLessThan(u64, 0, max_off - len);
+        try state.doWrite(buf[0..len], offset);
+        try state.doRead();
+
+        if (rand.intRangeLessThan(u8, 0, 3) == 0) {
+            try state.reopen();
+            try state.doRead();
+        }
+    }
+
+    try state.reopen();
+    try state.doRead();
+    try state.verifySize();
+    try state.verifyMerkle();
+}
+
+test "fuzz - truncate to every interesting boundary" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var state = FuzzState.init(testing.allocator, &file, rand);
+    defer state.deinit();
+    try state.create();
+
+    var buf: [5120]u8 = undefined;
+    rand.bytes(&buf);
+    try state.doWrite(&buf, 0);
+    try state.verifyMerkle();
+
+    const cs: u64 = state.chunk_size;
+    const boundaries = [_]u64{
+        0,
+        1,
+        cs / 2,
+        cs - 1,
+        cs,
+        cs + 1,
+        cs * 2 - 1,
+        cs * 2,
+        cs * 2 + 1,
+        cs * 3,
+        cs * 4,
+        cs * 5 - 1,
+        cs * 5,
+    };
+
+    for (boundaries) |target| {
+        if (target > state.shadow.items.len) {
+            try state.doTruncate(target);
+        }
+
+        rand.bytes(&buf);
+        const write_len = @min(buf.len, @as(u64, state.max_chunks) * cs - target);
+        if (write_len > 0) {
+            try state.doWrite(buf[0..@intCast(write_len)], target);
+        }
+
+        try state.verifyMerkle();
+
+        try state.doTruncate(target);
+        try state.verifyMerkle();
+
+        try state.doRead();
+        try state.verifySize();
+    }
+}
+
+test "fuzz - max_chunks boundary enforcement" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var state = FuzzState.init(testing.allocator, &file, rand);
+    state.max_chunks = 4;
+    defer state.deinit();
+    try state.create();
+
+    const cs = @as(u64, state.chunk_size);
+    const max_bytes = state.max_chunks * cs;
+
+    var wbuf: [1024]u8 = undefined;
+    rand.bytes(&wbuf);
+    try state.doWrite(&wbuf, 0);
+    try state.doWrite(&wbuf, cs);
+    try state.doWrite(&wbuf, cs * 2);
+    try state.doWrite(&wbuf, cs * 3);
+
+    try state.verifyMerkle();
+
+    var overflow_buf: [1]u8 = .{0xFF};
+    var bytes_written: usize = undefined;
+    const ret = aegis.aegis128l_raf_write(&state.ctx, &bytes_written, &overflow_buf, 1, max_bytes);
+    try testing.expect(ret != 0);
+    try testing.expectEqual(std.c._errno().*, @intFromEnum(std.c.E.OVERFLOW));
+
+    try state.verifyMerkle();
+    try state.doRead();
+}
+
+test "fuzz - odd max_chunks tree shapes" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    const odd_counts = [_]u64{ 1, 3, 5, 7, 9, 11, 13, 15 };
+
+    for (odd_counts) |max_chunks| {
+        var file = MemoryFile.init(testing.allocator);
+        defer file.deinit();
+
+        var io_src = std.Random.IoSource{ .io = testing.io };
+        const rand = io_src.interface();
+
+        var state = FuzzState.init(testing.allocator, &file, rand);
+        state.max_chunks = max_chunks;
+        defer state.deinit();
+        try state.create();
+
+        for (0..20) |_| {
+            var buf: [100]u8 = undefined;
+            rand.bytes(&buf);
+            const max_off = max_chunks * state.chunk_size;
+            if (max_off <= buf.len) continue;
+            const offset = rand.intRangeLessThan(u64, 0, max_off - buf.len);
+            try state.doWrite(&buf, offset);
+        }
+
+        try state.verifyMerkle();
+        try state.reopen();
+        try state.verifyMerkle();
+        try state.doRead();
+    }
+}
+
+test "fuzz - different hash lengths" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    const hash_lens = [_]u32{
+        aegis.AEGIS_RAF_MERKLE_HASH_MIN,
+        12,
+        16,
+        24,
+        32,
+        48,
+        aegis.AEGIS_RAF_MERKLE_HASH_MAX,
+    };
+
+    for (hash_lens) |hash_len| {
+        var file = MemoryFile.init(testing.allocator);
+        defer file.deinit();
+
+        var merkle_buf: [4096]u8 = undefined;
+        @memset(&merkle_buf, 0);
+
+        var merkle_cfg = aegis.aegis_raf_merkle_config{
+            .buf = &merkle_buf,
+            .len = merkle_buf.len,
+            .hash_len = hash_len,
+            .max_chunks = 8,
+            .user = null,
+            .hash_leaf = variableHashLeaf,
+            .hash_parent = variableHashParent,
+            .hash_empty = variableHashEmpty,
+        };
+
+        const merkle_size = aegis.aegis_raf_merkle_buffer_size(&merkle_cfg);
+        try testing.expect(merkle_size <= merkle_buf.len);
+
+        var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+        random.bytes(&key);
+
+        var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+        const scratch = aegis.aegis_raf_scratch{
+            .buf = &scratch_buf,
+            .len = scratch_buf.len,
+        };
+
+        const cfg = aegis.aegis_raf_config{
+            .chunk_size = 1024,
+            .flags = aegis.AEGIS_RAF_CREATE,
+            .scratch = &scratch,
+            .merkle = &merkle_cfg,
+        };
+
+        var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+        var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+        try testing.expectEqual(ret, 0);
+
+        var data: [3000]u8 = undefined;
+        random.bytes(&data);
+        var bytes_written: usize = undefined;
+        ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &data, data.len, 0);
+        try testing.expectEqual(ret, 0);
+
+        ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+        try testing.expectEqual(ret, 0);
+
+        var root_copy: [aegis.AEGIS_RAF_MERKLE_HASH_MAX]u8 = undefined;
+        const rp = aegis.aegis_raf_merkle_root(&merkle_cfg);
+        @memcpy(root_copy[0..hash_len], rp[0..hash_len]);
+
+        aegis.aegis128l_raf_close(&ctx);
+
+        @memset(&merkle_buf, 0);
+        var merkle_cfg2 = aegis.aegis_raf_merkle_config{
+            .buf = &merkle_buf,
+            .len = merkle_buf.len,
+            .hash_len = hash_len,
+            .max_chunks = 8,
+            .user = null,
+            .hash_leaf = variableHashLeaf,
+            .hash_parent = variableHashParent,
+            .hash_empty = variableHashEmpty,
+        };
+
+        const cfg2 = aegis.aegis_raf_config{
+            .chunk_size = 0,
+            .flags = 0,
+            .scratch = &scratch,
+            .merkle = &merkle_cfg2,
+        };
+
+        ret = aegis.aegis128l_raf_open(&ctx, &file.io(), &rng(), &cfg2, &key);
+        try testing.expectEqual(ret, 0);
+
+        ret = aegis.aegis128l_raf_merkle_rebuild(&ctx);
+        try testing.expectEqual(ret, 0);
+
+        const rebuilt_root = aegis.aegis_raf_merkle_root(&merkle_cfg2);
+        try testing.expectEqualSlices(u8, root_copy[0..hash_len], rebuilt_root[0..hash_len]);
+
+        ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+        try testing.expectEqual(ret, 0);
+
+        aegis.aegis128l_raf_close(&ctx);
+    }
+}
+
+test "fuzz - RAF without merkle random operations" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    rand.bytes(&key);
+
+    var shadow: std.ArrayListUnmanaged(u8) = .{};
+    defer shadow.deinit(testing.allocator);
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = null,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    const chunk_size: u64 = 1024;
+    const max_file: u64 = 16 * chunk_size;
+
+    for (0..300) |_| {
+        const action = rand.intRangeLessThan(u8, 0, 5);
+
+        switch (action) {
+            0, 1 => {
+                var buf: [400]u8 = undefined;
+                const len = rand.intRangeAtMost(usize, 1, buf.len);
+                rand.bytes(buf[0..len]);
+                const offset = rand.intRangeLessThan(u64, 0, max_file - len);
+                const end = offset + len;
+
+                var bytes_written: usize = undefined;
+                ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, buf[0..len].ptr, len, offset);
+                try testing.expectEqual(ret, 0);
+
+                const end_usize = @as(usize, @intCast(end));
+                const off_usize = @as(usize, @intCast(offset));
+                if (end_usize > shadow.items.len) {
+                    const old_len = shadow.items.len;
+                    shadow.resize(testing.allocator, end_usize) catch unreachable;
+                    if (old_len < off_usize) {
+                        @memset(shadow.items[old_len..off_usize], 0);
+                    }
+                }
+                @memcpy(shadow.items[off_usize..end_usize], buf[0..len]);
+            },
+            2 => {
+                if (shadow.items.len > 0) {
+                    var read_buf: [8192]u8 = undefined;
+                    const len = @min(shadow.items.len, read_buf.len);
+                    var bytes_read: usize = undefined;
+                    ret = aegis.aegis128l_raf_read(&ctx, &read_buf, &bytes_read, len, 0);
+                    try testing.expectEqual(ret, 0);
+                    try testing.expectEqualSlices(u8, shadow.items[0..len], read_buf[0..len]);
+                }
+            },
+            3 => {
+                if (shadow.items.len > 0) {
+                    const new_size = rand.intRangeLessThan(u64, 0, @intCast(shadow.items.len));
+                    ret = aegis.aegis128l_raf_truncate(&ctx, new_size);
+                    try testing.expectEqual(ret, 0);
+                    shadow.shrinkRetainingCapacity(@intCast(new_size));
+                }
+            },
+            4 => {
+                if (shadow.items.len > 0) {
+                    aegis.aegis128l_raf_close(&ctx);
+
+                    const cfg2 = aegis.aegis_raf_config{
+                        .chunk_size = 0,
+                        .flags = 0,
+                        .scratch = &scratch,
+                        .merkle = null,
+                    };
+
+                    ret = aegis.aegis128l_raf_open(&ctx, &file.io(), &rng(), &cfg2, &key);
+                    try testing.expectEqual(ret, 0);
+
+                    var read_buf: [8192]u8 = undefined;
+                    const len = @min(shadow.items.len, read_buf.len);
+                    var bytes_read: usize = undefined;
+                    ret = aegis.aegis128l_raf_read(&ctx, &read_buf, &bytes_read, len, 0);
+                    try testing.expectEqual(ret, 0);
+                    try testing.expectEqualSlices(u8, shadow.items[0..len], read_buf[0..len]);
+                }
+            },
+            else => {},
+        }
+    }
+
+    aegis.aegis128l_raf_close(&ctx);
+}
+
+test "fuzz - cross-chunk write patterns" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var state = FuzzState.init(testing.allocator, &file, rand);
+    defer state.deinit();
+    try state.create();
+
+    const cs = @as(u64, state.chunk_size);
+
+    for (0..50) |i| {
+        const offset = cs * @as(u64, @intCast(i % 8));
+        var buf: [200]u8 = undefined;
+        const len = rand.intRangeAtMost(usize, 1, buf.len);
+        rand.bytes(buf[0..len]);
+
+        const boundary = (offset / cs + 1) * cs;
+        const write_offset = if (boundary > len / 2) boundary - len / 2 else 0;
+        if (write_offset + len > state.max_chunks * cs) continue;
+
+        try state.doWrite(buf[0..len], write_offset);
+        try state.verifyMerkle();
+    }
+
+    try state.reopen();
+    try state.verifyMerkle();
+    try state.doRead();
+}
+
+test "fuzz - aegis256 random operations with merkle" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    var key: [aegis.aegis256_KEYBYTES]u8 = undefined;
+    rand.bytes(&key);
+
+    var shadow: std.ArrayListUnmanaged(u8) = .{};
+    defer shadow.deinit(testing.allocator);
+
+    const max_chunks: u64 = 16;
+    const chunk_size: u32 = 1024;
+    var merkle_buf: [4096]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    var merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS256_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = chunk_size,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis256_raf_ctx align(32) = undefined;
+    var ret = aegis.aegis256_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expectEqual(ret, 0);
+
+    const max_bytes = max_chunks * chunk_size;
+
+    for (0..200) |_| {
+        const action = rand.intRangeLessThan(u8, 0, 4);
+
+        switch (action) {
+            0, 1 => {
+                var buf: [300]u8 = undefined;
+                const len = rand.intRangeAtMost(usize, 1, buf.len);
+                rand.bytes(buf[0..len]);
+                if (max_bytes <= len) continue;
+                const offset = rand.intRangeLessThan(u64, 0, max_bytes - len);
+                const end = offset + len;
+
+                var bytes_written: usize = undefined;
+                ret = aegis.aegis256_raf_write(&ctx, &bytes_written, buf[0..len].ptr, len, offset);
+                try testing.expectEqual(ret, 0);
+
+                const end_usize = @as(usize, @intCast(end));
+                const off_usize = @as(usize, @intCast(offset));
+                if (end_usize > shadow.items.len) {
+                    const old_len = shadow.items.len;
+                    shadow.resize(testing.allocator, end_usize) catch unreachable;
+                    if (old_len < off_usize) {
+                        @memset(shadow.items[old_len..off_usize], 0);
+                    }
+                }
+                @memcpy(shadow.items[off_usize..end_usize], buf[0..len]);
+            },
+            2 => {
+                if (shadow.items.len > 0) {
+                    const new_size = rand.intRangeLessThan(u64, 0, @intCast(shadow.items.len + 1));
+                    ret = aegis.aegis256_raf_truncate(&ctx, new_size);
+                    try testing.expectEqual(ret, 0);
+                    shadow.shrinkRetainingCapacity(@intCast(new_size));
+                }
+            },
+            3 => {
+                if (shadow.items.len > 0) {
+                    var read_buf: [8192]u8 = undefined;
+                    const len = @min(shadow.items.len, read_buf.len);
+                    var bytes_read: usize = undefined;
+                    ret = aegis.aegis256_raf_read(&ctx, &read_buf, &bytes_read, len, 0);
+                    try testing.expectEqual(ret, 0);
+                    try testing.expectEqualSlices(u8, shadow.items[0..len], read_buf[0..len]);
+                }
+            },
+            else => {},
+        }
+
+        if (rand.intRangeLessThan(u8, 0, 5) == 0) {
+            ret = aegis.aegis256_raf_merkle_verify(&ctx, null);
+            try testing.expectEqual(ret, 0);
+        }
+    }
+
+    ret = aegis.aegis256_raf_merkle_verify(&ctx, null);
+    try testing.expectEqual(ret, 0);
+
+    aegis.aegis256_raf_close(&ctx);
+}
+
+test "fuzz - write then corrupt then detect" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var io_src = std.Random.IoSource{ .io = testing.io };
+    const rand = io_src.interface();
+
+    for (0..20) |_| {
+        var file = MemoryFile.init(testing.allocator);
+        defer file.deinit();
+
+        var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+        rand.bytes(&key);
+
+        const max_chunks: u64 = 8;
+        var merkle_buf: [4096]u8 = undefined;
+        @memset(&merkle_buf, 0);
+
+        const merkle_cfg = aegis.aegis_raf_merkle_config{
+            .buf = &merkle_buf,
+            .len = merkle_buf.len,
+            .hash_len = MERKLE_HASH_LEN,
+            .max_chunks = max_chunks,
+            .user = null,
+            .hash_leaf = xorHashLeaf,
+            .hash_parent = xorHashParent,
+            .hash_empty = xorHashEmpty,
+        };
+
+        var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+        const scratch = aegis.aegis_raf_scratch{
+            .buf = &scratch_buf,
+            .len = scratch_buf.len,
+        };
+
+        const cfg = aegis.aegis_raf_config{
+            .chunk_size = 1024,
+            .flags = aegis.AEGIS_RAF_CREATE,
+            .scratch = &scratch,
+            .merkle = &merkle_cfg,
+        };
+
+        var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+        var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+        try testing.expectEqual(ret, 0);
+
+        const num_chunks = rand.intRangeAtMost(u64, 1, max_chunks);
+        const data_len = @as(usize, @intCast(num_chunks)) * 1024;
+        const data = try testing.allocator.alloc(u8, data_len);
+        defer testing.allocator.free(data);
+        rand.bytes(data);
+
+        var bytes_written: usize = undefined;
+        ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, data.ptr, data.len, 0);
+        try testing.expectEqual(ret, 0);
+
+        ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+        try testing.expectEqual(ret, 0);
+
+        const corrupt_chunk = rand.intRangeLessThan(u64, 0, num_chunks);
+        const leaf_offset = @as(usize, @intCast(corrupt_chunk)) * MERKLE_HASH_LEN;
+        merkle_buf[leaf_offset] ^= 0xFF;
+
+        var corrupted_chunk: u64 = undefined;
+        ret = aegis.aegis128l_raf_merkle_verify(&ctx, &corrupted_chunk);
+        try testing.expect(ret != 0);
+        try testing.expectEqual(corrupted_chunk, corrupt_chunk);
+
+        merkle_buf[leaf_offset] ^= 0xFF;
+
+        ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
+        try testing.expectEqual(ret, 0);
+
+        aegis.aegis128l_raf_close(&ctx);
+    }
+}
