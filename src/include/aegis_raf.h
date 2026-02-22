@@ -35,6 +35,8 @@ extern "C" {
 
 #define AEGIS_RAF_SCRATCH_ALIGN  64
 #define AEGIS_RAF_ALIGN_UP(x, a) (((x) + ((a) - 1)) & ~((size_t) (a) - 1))
+#define AEGIS_RAF_MERKLE_HASH_MIN 8
+#define AEGIS_RAF_MERKLE_HASH_MAX 64
 
 #define AEGIS128L_RAF_NPUBBYTES  16
 #define AEGIS128X2_RAF_NPUBBYTES 16
@@ -136,6 +138,8 @@ typedef struct aegis_raf_rng {
  *              aegis_raf_merkle_buffer_size() to determine required size.
  * len:         Size of the buffer in bytes.
  * hash_len:    Size of each hash in bytes (e.g., 32 for SHA-256).
+ *              Must be between AEGIS_RAF_MERKLE_HASH_MIN and
+ *              AEGIS_RAF_MERKLE_HASH_MAX.
  * max_chunks:  Maximum number of chunks (leaves) the tree can hold.
  *              Writes exceeding this limit will fail with EOVERFLOW.
  *

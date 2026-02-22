@@ -2961,7 +2961,7 @@ test "aegis128l_raf_merkle - verify detects parent and root tampering" {
     aegis.aegis128l_raf_close(&ctx);
 }
 
-test "aegis128l_raf_merkle - odd tree supports large hash_len" {
+test "aegis128l_raf_merkle - odd tree supports max hash_len" {
     try testing.expectEqual(aegis.aegis_init(), 0);
 
     var file = MemoryFile.init(testing.allocator);
@@ -2970,7 +2970,7 @@ test "aegis128l_raf_merkle - odd tree supports large hash_len" {
     var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
     random.bytes(&key);
 
-    const large_hash_len: usize = 300;
+    const max_hash_len: usize = aegis.AEGIS_RAF_MERKLE_HASH_MAX;
     const max_chunks: u64 = 3;
     var merkle_buf: [2048]u8 = undefined;
     @memset(&merkle_buf, 0);
@@ -2978,7 +2978,7 @@ test "aegis128l_raf_merkle - odd tree supports large hash_len" {
     var merkle_cfg = aegis.aegis_raf_merkle_config{
         .buf = &merkle_buf,
         .len = merkle_buf.len,
-        .hash_len = large_hash_len,
+        .hash_len = max_hash_len,
         .max_chunks = max_chunks,
         .user = null,
         .hash_leaf = variableHashLeaf,
@@ -3020,6 +3020,90 @@ test "aegis128l_raf_merkle - odd tree supports large hash_len" {
     try testing.expectEqual(ret, 0);
 
     aegis.aegis128l_raf_close(&ctx);
+}
+
+test "aegis128l_raf_merkle - hash_len above max is rejected" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 3;
+    var merkle_buf: [2048]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    var merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = aegis.AEGIS_RAF_MERKLE_HASH_MAX + 1,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = variableHashLeaf,
+        .hash_parent = variableHashParent,
+        .hash_empty = variableHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+    const ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expect(ret != 0);
+}
+
+test "aegis128l_raf_merkle - hash_len below min is rejected" {
+    try testing.expectEqual(aegis.aegis_init(), 0);
+
+    var file = MemoryFile.init(testing.allocator);
+    defer file.deinit();
+
+    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
+    random.bytes(&key);
+
+    const max_chunks: u64 = 3;
+    var merkle_buf: [2048]u8 = undefined;
+    @memset(&merkle_buf, 0);
+
+    var merkle_cfg = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf,
+        .len = merkle_buf.len,
+        .hash_len = aegis.AEGIS_RAF_MERKLE_HASH_MIN - 1,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = variableHashLeaf,
+        .hash_parent = variableHashParent,
+        .hash_empty = variableHashEmpty,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg,
+    };
+
+    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
+    const ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    try testing.expect(ret != 0);
 }
 
 test "aegis128l_raf_merkle - truncate to zero clears all leaves" {

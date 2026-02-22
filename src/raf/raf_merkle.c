@@ -145,7 +145,12 @@ aegis_raf_merkle_config_validate(const aegis_raf_merkle_config *cfg)
         return -1;
     }
 
-    if (cfg->buf == NULL || cfg->hash_len == 0 || cfg->max_chunks == 0) {
+    if (cfg->buf == NULL || cfg->max_chunks == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (cfg->hash_len < AEGIS_RAF_MERKLE_HASH_MIN ||
+        cfg->hash_len > AEGIS_RAF_MERKLE_HASH_MAX) {
         errno = EINVAL;
         return -1;
     }
@@ -209,8 +214,8 @@ raf_merkle_update_parents(const aegis_raf_merkle_config *cfg, uint64_t first_chu
     size_t   left_off;
     size_t   right_off;
     size_t   parent_off;
-    uint8_t *empty_hash = NULL;
-    int      ret        = 0;
+    uint8_t  empty_hash[AEGIS_RAF_MERKLE_HASH_MAX];
+    int      ret;
 
     if (cfg == NULL || first_chunk > last_chunk || last_chunk >= cfg->max_chunks) {
         errno = EINVAL;
@@ -246,24 +251,9 @@ raf_merkle_update_parents(const aegis_raf_merkle_config *cfg, uint64_t first_chu
                 ret = cfg->hash_parent(cfg->user, cfg->buf + parent_off, cfg->hash_len,
                                        cfg->buf + left_off, cfg->buf + right_off, level, i);
             } else {
-#if defined(__wasm__) && !defined(__wasi__)
-                if (empty_hash == NULL) {
-                    empty_hash = (uint8_t *) __builtin_alloca(cfg->hash_len);
-                }
-#else
-                if (empty_hash == NULL) {
-                    empty_hash = (uint8_t *) malloc(cfg->hash_len);
-                    if (empty_hash == NULL) {
-                        errno = ENOMEM;
-                        ret   = -1;
-                        goto cleanup;
-                    }
-                }
-#endif
-
                 ret = cfg->hash_empty(cfg->user, empty_hash, cfg->hash_len, level, right_child);
                 if (ret != 0) {
-                    goto cleanup;
+                    return ret;
                 }
 
                 parent_off = raf_merkle_node_offset(cfg->max_chunks, cfg->hash_len, level + 1, i);
@@ -273,16 +263,12 @@ raf_merkle_update_parents(const aegis_raf_merkle_config *cfg, uint64_t first_chu
             }
 
             if (ret != 0) {
-                goto cleanup;
+                return ret;
             }
         }
     }
 
-cleanup:
-#if !(defined(__wasm__) && !defined(__wasi__))
-    free(empty_hash);
-#endif
-    return ret;
+    return 0;
 }
 
 int

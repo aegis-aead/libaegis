@@ -938,8 +938,8 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
     size_t                  right_off;
     size_t                  parent_off;
     const uint8_t          *stored_root;
-    uint8_t                *computed_hash;
-    uint8_t                *empty_hash;
+    uint8_t                 computed_hash[AEGIS_RAF_MERKLE_HASH_MAX];
+    uint8_t                 empty_hash[AEGIS_RAF_MERKLE_HASH_MAX];
     int                     ret = 0;
 
     if (!internal->merkle_enabled) {
@@ -947,18 +947,12 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
         return -1;
     }
 
-#if defined(__wasm__) && !defined(__wasi__)
-    computed_hash = (uint8_t *) __builtin_alloca(internal->merkle_cfg.hash_len);
-    empty_hash    = (uint8_t *) __builtin_alloca(internal->merkle_cfg.hash_len);
-#else
-    computed_hash = (uint8_t *) malloc(internal->merkle_cfg.hash_len);
-    empty_hash    = (uint8_t *) malloc(internal->merkle_cfg.hash_len);
-    if (computed_hash == NULL || empty_hash == NULL) {
-        errno = ENOMEM;
+    if (internal->merkle_cfg.hash_len < AEGIS_RAF_MERKLE_HASH_MIN ||
+        internal->merkle_cfg.hash_len > AEGIS_RAF_MERKLE_HASH_MAX) {
+        errno = EINVAL;
         ret   = -1;
         goto cleanup;
     }
-#endif
 
     num_chunks = get_chunk_count(internal->chunk_size, internal->file_size);
     if (num_chunks > internal->merkle_cfg.max_chunks) {
@@ -1101,10 +1095,6 @@ FN(merkle_verify)(CTX_TYPE *ctx, uint64_t *corrupted_chunk)
     }
 
 cleanup:
-#if !(defined(__wasm__) && !defined(__wasi__))
-    free(computed_hash);
-    free(empty_hash);
-#endif
     return ret;
 }
 
