@@ -8,6 +8,8 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+set(CMAKE_C_STANDARD 99)
+
 include_directories("src/include")
 
 option(FAVOR_PERFORMANCE "Favor performance over side-channel mitigations" OFF)
