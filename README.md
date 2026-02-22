@@ -21,7 +21,7 @@ Portable C implementations of the [AEGIS](https://datatracker.ietf.org/doc/draft
 
 Note that the compiler makes a difference. Zig (or a recent `clang` with target-specific options such as `-march=native`) produces more efficient code than `gcc`.
 
-### Compilation with `zig`:
+### Compilation with `zig`
 
 ```sh
 zig build -Drelease
@@ -47,12 +47,11 @@ A benchmark can also be built with the `-Dwith-benchmark` option:
 zig build -Drelease -Dfavor-performance -Dwith-benchmark
 ```
 
-
 `libaegis` doesn't need WASI nor any extension to work on WebAssembly. The `wasm32-freestanding` target is fully supported.
 
 WebAssembly extensions such as `bulk_memory` and `simd128` can be enabled by adding `-Dcpu=baseline+bulk_memory+simd128` to the command line.
 
-### Compilation with `cmake`:
+### Compilation with `cmake`
 
 ```sh
 mkdir build
@@ -98,6 +97,35 @@ aegis128l_raf_close(&ctx);  // automatically calls sync
 ```
 
 The API requires pluggable I/O (`read_at`, `write_at`, `get_size`, `set_size`, `sync`) and RNG callbacks, making it usable with any storage backend. Callers provide a scratch buffer for internal use, enabling zero-allocation operation.
+
+#### Merkle tree integrity
+
+RAF supports an optional Merkle tree that tracks per-chunk integrity. The tree is updated automatically on writes and truncations, and can be verified or rebuilt on demand. This is useful for detecting silent corruption or tampering without re-reading and re-encrypting every chunk.
+
+```c
+// Provide hash callbacks and a caller-allocated buffer
+aegis_raf_merkle_config merkle = {
+    .hash_leaf   = my_hash_leaf,    // hash chunk data into a leaf digest
+    .hash_parent = my_hash_parent,  // combine two child digests
+    .hash_empty  = my_hash_empty,   // digest for missing/empty nodes
+    .hash_len    = 32,              // digest size (8..64 bytes)
+    .max_chunks  = 1024,
+    .buf         = merkle_buf,
+    .len         = sizeof merkle_buf,
+};
+
+// Pass merkle config when creating the RAF context
+aegis_raf_config cfg = {
+    .scratch = &scratch, .chunk_size = 4096,
+    .flags = AEGIS_RAF_CREATE, .merkle = &merkle,
+};
+
+// After writes, verify integrity or read the root hash
+aegis128l_raf_merkle_verify(&ctx, &corrupted_chunk);
+const uint8_t *root = aegis_raf_merkle_root(&merkle);
+```
+
+The tree uses a flat buffer layout with configurable hash callbacks, so it works with any hash function. `aegis_raf_merkle_buffer_size()` computes the required buffer size for a given `max_chunks` and `hash_len`.
 
 ## Bindings
 
