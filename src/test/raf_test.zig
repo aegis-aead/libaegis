@@ -1789,45 +1789,6 @@ test "aegis_raf_merkle - buffer_size" {
     try testing.expectEqual(aegis.aegis_raf_merkle_buffer_size(&cfg), 112);
 }
 
-test "aegis_raf_merkle - root rejects null out" {
-    var merkle_buf: [256]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    const cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 4,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, null, MERKLE_HASH_LEN, null, 0, 0), -1);
-}
-
-test "aegis_raf_merkle - root rejects out_len < hash_len" {
-    var merkle_buf: [256]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    const cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 4,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    var out: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &out, MERKLE_HASH_LEN - 1, null, 0, 0), -1);
-}
-
 test "aegis_raf_merkle - null hash_commitment rejected by config_validate" {
     try testing.expectEqual(aegis.aegis_init(), 0);
 
@@ -1867,83 +1828,6 @@ test "aegis_raf_merkle - null hash_commitment rejected by config_validate" {
 
     var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
     try testing.expectEqual(aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key), -1);
-}
-
-test "aegis_raf_merkle - null hash_commitment rejected by root" {
-    var merkle_buf: [256]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    const cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 4,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = null,
-    };
-
-    var out: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &out, MERKLE_HASH_LEN, null, 0, 0), -1);
-}
-
-test "aegis_raf_merkle - different file_size produces different commitment" {
-    var merkle_buf: [256]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    var cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 4,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    // Initialize tree (all empty leaves + parents)
-    for (0..cfg.max_chunks) |i| {
-        try testing.expectEqual(xorHashEmpty(null, cfg.buf.? + i * MERKLE_HASH_LEN, MERKLE_HASH_LEN, 0, @intCast(i)), 0);
-    }
-
-    var root_a: [MERKLE_HASH_LEN]u8 = undefined;
-    var root_b: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &root_a, MERKLE_HASH_LEN, null, 0, 100), 0);
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &root_b, MERKLE_HASH_LEN, null, 0, 200), 0);
-
-    try testing.expect(!std.mem.eql(u8, &root_a, &root_b));
-}
-
-test "aegis_raf_merkle - same file_size produces identical commitment" {
-    var merkle_buf: [256]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    var cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 4,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    for (0..cfg.max_chunks) |i| {
-        try testing.expectEqual(xorHashEmpty(null, cfg.buf.? + i * MERKLE_HASH_LEN, MERKLE_HASH_LEN, 0, @intCast(i)), 0);
-    }
-
-    var root_a: [MERKLE_HASH_LEN]u8 = undefined;
-    var root_b: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &root_a, MERKLE_HASH_LEN, null, 0, 42), 0);
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &root_b, MERKLE_HASH_LEN, null, 0, 42), 0);
-
-    try testing.expectEqualSlices(u8, &root_a, &root_b);
 }
 
 test "aegis128l_raf_merkle - root changes on write" {
@@ -1993,7 +1877,7 @@ test "aegis128l_raf_merkle - root changes on write" {
     try testing.expectEqual(ret, 0);
 
     var root0: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root0, MERKLE_HASH_LEN, null, 0, 0), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root0, MERKLE_HASH_LEN), 0);
 
     var root_before: [MERKLE_HASH_LEN]u8 = undefined;
     @memcpy(&root_before, &root0);
@@ -2004,7 +1888,7 @@ test "aegis128l_raf_merkle - root changes on write" {
     try testing.expectEqual(ret, 0);
 
     var root1: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root1, MERKLE_HASH_LEN, null, 0, test_data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root1, MERKLE_HASH_LEN), 0);
 
     try testing.expect(!std.mem.eql(u8, &root_before, &root1));
 
@@ -2016,7 +1900,7 @@ test "aegis128l_raf_merkle - root changes on write" {
     try testing.expectEqual(ret, 0);
 
     var root2: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root2, MERKLE_HASH_LEN, null, 0, 2048 + more_data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root2, MERKLE_HASH_LEN), 0);
     try testing.expect(!std.mem.eql(u8, &root_after_write, &root2));
 
     aegis.aegis128l_raf_close(&ctx);
@@ -2092,7 +1976,7 @@ test "aegis128l_raf_merkle - rebuild matches incremental" {
     try testing.expectEqual(ret, 0);
 
     var incremental_root: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg1, &incremental_root, MERKLE_HASH_LEN, null, 0, data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &incremental_root, MERKLE_HASH_LEN), 0);
 
     aegis.aegis128l_raf_close(&ctx);
 
@@ -2110,7 +1994,7 @@ test "aegis128l_raf_merkle - rebuild matches incremental" {
     try testing.expectEqual(ret, 0);
 
     var rebuilt_root: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg2, &rebuilt_root, MERKLE_HASH_LEN, null, 0, data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &rebuilt_root, MERKLE_HASH_LEN), 0);
 
     try testing.expectEqualSlices(u8, &incremental_root, &rebuilt_root);
 
@@ -2170,13 +2054,13 @@ test "aegis128l_raf_merkle - truncate shrink clears leaves" {
     try testing.expectEqual(ret, 0);
 
     var root_before_truncate: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_before_truncate, MERKLE_HASH_LEN, null, 0, data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_before_truncate, MERKLE_HASH_LEN), 0);
 
     ret = aegis.aegis128l_raf_truncate(&ctx, 500);
     try testing.expectEqual(ret, 0);
 
     var root_after_truncate: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_after_truncate, MERKLE_HASH_LEN, null, 0, 500), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_after_truncate, MERKLE_HASH_LEN), 0);
 
     try testing.expect(!std.mem.eql(u8, &root_before_truncate, &root_after_truncate));
 
@@ -2236,13 +2120,13 @@ test "aegis128l_raf_merkle - truncate within same chunk count rehashes" {
     try testing.expectEqual(ret, 0);
 
     var root_before_truncate: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_before_truncate, MERKLE_HASH_LEN, null, 0, data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_before_truncate, MERKLE_HASH_LEN), 0);
 
     ret = aegis.aegis128l_raf_truncate(&ctx, 1200);
     try testing.expectEqual(ret, 0);
 
     var root_after_truncate: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_after_truncate, MERKLE_HASH_LEN, null, 0, 1200), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_after_truncate, MERKLE_HASH_LEN), 0);
 
     try testing.expect(!std.mem.eql(u8, &root_before_truncate, &root_after_truncate));
 
@@ -2359,7 +2243,7 @@ test "aegis128l_raf_merkle - partial overwrite updates root" {
     try testing.expectEqual(ret, 0);
 
     var root_before: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_before, MERKLE_HASH_LEN, null, 0, data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_before, MERKLE_HASH_LEN), 0);
 
     var patch: [11]u8 = undefined;
     @memset(&patch, 0xFF);
@@ -2367,7 +2251,7 @@ test "aegis128l_raf_merkle - partial overwrite updates root" {
     try testing.expectEqual(ret, 0);
 
     var root_after: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_after, MERKLE_HASH_LEN, null, 0, data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_after, MERKLE_HASH_LEN), 0);
 
     try testing.expect(!std.mem.eql(u8, &root_before, &root_after));
 
@@ -2626,7 +2510,7 @@ test "aegis128l_raf_merkle - single chunk tree" {
     try testing.expectEqual(ret, 0);
 
     var root: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root, MERKLE_HASH_LEN, null, 0, test_data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root, MERKLE_HASH_LEN), 0);
 
     ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
     try testing.expectEqual(ret, 0);
@@ -2683,7 +2567,7 @@ test "aegis128l_raf_merkle - empty file operations" {
     try testing.expectEqual(ret, 0);
 
     var empty_root: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &empty_root, MERKLE_HASH_LEN, null, 0, 0), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &empty_root, MERKLE_HASH_LEN), 0);
 
     var empty_root_copy: [MERKLE_HASH_LEN]u8 = undefined;
     @memcpy(&empty_root_copy, &empty_root);
@@ -2703,93 +2587,6 @@ test "aegis128l_raf_merkle - empty file operations" {
     try testing.expectEqual(ret, 0);
 
     aegis.aegis128l_raf_close(&ctx);
-}
-
-test "aegis128l_raf_merkle - determinism same data same root" {
-    try testing.expectEqual(aegis.aegis_init(), 0);
-
-    var file1 = MemoryFile.init(testing.allocator);
-    defer file1.deinit();
-    var file2 = MemoryFile.init(testing.allocator);
-    defer file2.deinit();
-
-    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
-    random.bytes(&key);
-
-    const max_chunks: u64 = 8;
-    var merkle_buf1: [256]u8 = undefined;
-    var merkle_buf2: [256]u8 = undefined;
-    @memset(&merkle_buf1, 0);
-    @memset(&merkle_buf2, 0);
-
-    const merkle_cfg1 = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf1,
-        .len = merkle_buf1.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = max_chunks,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    const merkle_cfg2 = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf2,
-        .len = merkle_buf2.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = max_chunks,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
-    const scratch = aegis.aegis_raf_scratch{
-        .buf = &scratch_buf,
-        .len = scratch_buf.len,
-    };
-
-    const cfg1 = aegis.aegis_raf_config{
-        .chunk_size = 1024,
-        .flags = aegis.AEGIS_RAF_CREATE,
-        .scratch = &scratch,
-        .merkle = &merkle_cfg1,
-    };
-
-    const cfg2 = aegis.aegis_raf_config{
-        .chunk_size = 1024,
-        .flags = aegis.AEGIS_RAF_CREATE,
-        .scratch = &scratch,
-        .merkle = &merkle_cfg2,
-    };
-
-    var ctx1: aegis.aegis128l_raf_ctx align(32) = undefined;
-    var ctx2: aegis.aegis128l_raf_ctx align(32) = undefined;
-
-    var ret = aegis.aegis128l_raf_create(&ctx1, &file1.io(), &rng(), &cfg1, &key);
-    try testing.expectEqual(ret, 0);
-
-    ret = aegis.aegis128l_raf_create(&ctx2, &file2.io(), &rng(), &cfg2, &key);
-    try testing.expectEqual(ret, 0);
-
-    const test_data = "Identical data for both files to test determinism";
-    var bytes_written: usize = undefined;
-    ret = aegis.aegis128l_raf_write(&ctx1, &bytes_written, test_data.ptr, test_data.len, 0);
-    try testing.expectEqual(ret, 0);
-    ret = aegis.aegis128l_raf_write(&ctx2, &bytes_written, test_data.ptr, test_data.len, 0);
-    try testing.expectEqual(ret, 0);
-
-    var root1: [MERKLE_HASH_LEN]u8 = undefined;
-    var root2: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg1, &root1, MERKLE_HASH_LEN, null, 0, test_data.len), 0);
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg2, &root2, MERKLE_HASH_LEN, null, 0, test_data.len), 0);
-    try testing.expectEqualSlices(u8, &root1, &root2);
-
-    aegis.aegis128l_raf_close(&ctx1);
-    aegis.aegis128l_raf_close(&ctx2);
 }
 
 test "aegis128l_raf_merkle - write spanning multiple chunks" {
@@ -2846,7 +2643,7 @@ test "aegis128l_raf_merkle - write spanning multiple chunks" {
     try testing.expectEqual(bytes_written, large_data.len);
 
     var root1_copy: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root1_copy, MERKLE_HASH_LEN, null, 0, large_data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root1_copy, MERKLE_HASH_LEN), 0);
 
     ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
     try testing.expectEqual(ret, 0);
@@ -2882,7 +2679,7 @@ test "aegis128l_raf_merkle - write spanning multiple chunks" {
     try testing.expectEqual(ret, 0);
 
     var root2: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg2, &root2, MERKLE_HASH_LEN, null, 0, large_data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root2, MERKLE_HASH_LEN), 0);
     try testing.expectEqualSlices(u8, &root1_copy, &root2);
 
     aegis.aegis128l_raf_close(&ctx);
@@ -2938,14 +2735,14 @@ test "aegis128l_raf_merkle - write at chunk boundary" {
     try testing.expectEqual(ret, 0);
 
     var root_after_chunk0: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_after_chunk0, MERKLE_HASH_LEN, null, 0, 1024), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_after_chunk0, MERKLE_HASH_LEN), 0);
 
     @memset(&chunk_data, 0x22);
     ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &chunk_data, chunk_data.len, 1024);
     try testing.expectEqual(ret, 0);
 
     var root_after_chunk1: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_after_chunk1, MERKLE_HASH_LEN, null, 0, 2048), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_after_chunk1, MERKLE_HASH_LEN), 0);
 
     try testing.expect(!std.mem.eql(u8, &root_after_chunk0, &root_after_chunk1));
 
@@ -2954,7 +2751,7 @@ test "aegis128l_raf_merkle - write at chunk boundary" {
     try testing.expectEqual(ret, 0);
 
     var root_after_spanning: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_after_spanning, MERKLE_HASH_LEN, null, 0, 2560), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_after_spanning, MERKLE_HASH_LEN), 0);
 
     try testing.expect(!std.mem.eql(u8, &root_after_chunk1, &root_after_spanning));
 
@@ -3366,7 +3163,7 @@ test "aegis128l_raf_merkle - truncate to zero clears all leaves" {
     try testing.expectEqual(ret, 0);
 
     var empty_root: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &empty_root, MERKLE_HASH_LEN, null, 0, 0), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &empty_root, MERKLE_HASH_LEN), 0);
 
     var large_data: [5000]u8 = undefined;
     for (&large_data, 0..) |*b, i| {
@@ -3513,7 +3310,7 @@ test "aegis128l_raf_merkle - truncate grow rebuild matches incremental" {
     try testing.expectEqual(ret, 0);
 
     var incremental_root: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg1, &incremental_root, MERKLE_HASH_LEN, null, 0, 2500), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &incremental_root, MERKLE_HASH_LEN), 0);
 
     aegis.aegis128l_raf_close(&ctx);
 
@@ -3543,106 +3340,11 @@ test "aegis128l_raf_merkle - truncate grow rebuild matches incremental" {
     try testing.expectEqual(ret, 0);
 
     var rebuilt_root: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg2, &rebuilt_root, MERKLE_HASH_LEN, null, 0, 2500), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &rebuilt_root, MERKLE_HASH_LEN), 0);
 
     try testing.expectEqualSlices(u8, &incremental_root, &rebuilt_root);
 
     aegis.aegis128l_raf_close(&ctx);
-}
-
-test "aegis128l_raf_merkle - incremental writes same as bulk" {
-    try testing.expectEqual(aegis.aegis_init(), 0);
-
-    var file1 = MemoryFile.init(testing.allocator);
-    defer file1.deinit();
-    var file2 = MemoryFile.init(testing.allocator);
-    defer file2.deinit();
-
-    var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
-    random.bytes(&key);
-
-    const max_chunks: u64 = 8;
-    var merkle_buf1: [256]u8 = undefined;
-    var merkle_buf2: [256]u8 = undefined;
-    @memset(&merkle_buf1, 0);
-    @memset(&merkle_buf2, 0);
-
-    const merkle_cfg1 = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf1,
-        .len = merkle_buf1.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = max_chunks,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    const merkle_cfg2 = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf2,
-        .len = merkle_buf2.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = max_chunks,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
-    const scratch = aegis.aegis_raf_scratch{
-        .buf = &scratch_buf,
-        .len = scratch_buf.len,
-    };
-
-    const cfg1 = aegis.aegis_raf_config{
-        .chunk_size = 1024,
-        .flags = aegis.AEGIS_RAF_CREATE,
-        .scratch = &scratch,
-        .merkle = &merkle_cfg1,
-    };
-
-    const cfg2 = aegis.aegis_raf_config{
-        .chunk_size = 1024,
-        .flags = aegis.AEGIS_RAF_CREATE,
-        .scratch = &scratch,
-        .merkle = &merkle_cfg2,
-    };
-
-    var ctx1: aegis.aegis128l_raf_ctx align(32) = undefined;
-    var ctx2: aegis.aegis128l_raf_ctx align(32) = undefined;
-
-    var ret = aegis.aegis128l_raf_create(&ctx1, &file1.io(), &rng(), &cfg1, &key);
-    try testing.expectEqual(ret, 0);
-    ret = aegis.aegis128l_raf_create(&ctx2, &file2.io(), &rng(), &cfg2, &key);
-    try testing.expectEqual(ret, 0);
-
-    var test_data: [3000]u8 = undefined;
-    for (&test_data, 0..) |*b, i| {
-        b.* = @truncate(i *% 7);
-    }
-
-    var bytes_written: usize = undefined;
-    ret = aegis.aegis128l_raf_write(&ctx1, &bytes_written, &test_data, test_data.len, 0);
-    try testing.expectEqual(ret, 0);
-
-    ret = aegis.aegis128l_raf_write(&ctx2, &bytes_written, test_data[0..1000].ptr, 1000, 0);
-    try testing.expectEqual(ret, 0);
-    ret = aegis.aegis128l_raf_write(&ctx2, &bytes_written, test_data[1000..2000].ptr, 1000, 1000);
-    try testing.expectEqual(ret, 0);
-    ret = aegis.aegis128l_raf_write(&ctx2, &bytes_written, test_data[2000..3000].ptr, 1000, 2000);
-    try testing.expectEqual(ret, 0);
-
-    var root1: [MERKLE_HASH_LEN]u8 = undefined;
-    var root2: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg1, &root1, MERKLE_HASH_LEN, null, 0, test_data.len), 0);
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg2, &root2, MERKLE_HASH_LEN, null, 0, test_data.len), 0);
-    try testing.expectEqualSlices(u8, &root1, &root2);
-
-    aegis.aegis128l_raf_close(&ctx1);
-    aegis.aegis128l_raf_close(&ctx2);
 }
 
 test "aegis128l_raf_merkle - overwrite preserves tree consistency" {
@@ -4010,7 +3712,7 @@ test "aegis128l_raf_merkle - different data different roots" {
     try testing.expectEqual(ret, 0);
 
     var root1: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root1, MERKLE_HASH_LEN, null, 0, data1.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root1, MERKLE_HASH_LEN), 0);
 
     ret = aegis.aegis128l_raf_truncate(&ctx, 0);
     try testing.expectEqual(ret, 0);
@@ -4020,7 +3722,7 @@ test "aegis128l_raf_merkle - different data different roots" {
     try testing.expectEqual(ret, 0);
 
     var root2: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root2, MERKLE_HASH_LEN, null, 0, data2.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root2, MERKLE_HASH_LEN), 0);
 
     try testing.expect(!std.mem.eql(u8, &root1, &root2));
 
@@ -4077,14 +3779,14 @@ test "aegis128l_raf_merkle - single byte change changes root" {
     try testing.expectEqual(ret, 0);
 
     var root_before: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_before, MERKLE_HASH_LEN, null, 0, data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_before, MERKLE_HASH_LEN), 0);
 
     const single_byte: [1]u8 = .{0xFF};
     ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, &single_byte, 1, 1500);
     try testing.expectEqual(ret, 0);
 
     var root_after: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_after, MERKLE_HASH_LEN, null, 0, data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_after, MERKLE_HASH_LEN), 0);
 
     try testing.expect(!std.mem.eql(u8, &root_before, &root_after));
 
@@ -4224,9 +3926,9 @@ test "aegis128l_raf_merkle - root commitment consistency" {
     var root1: [MERKLE_HASH_LEN]u8 = undefined;
     var root2: [MERKLE_HASH_LEN]u8 = undefined;
     var root3: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root1, MERKLE_HASH_LEN, null, 0, 0), 0);
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root2, MERKLE_HASH_LEN, null, 0, 0), 0);
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root3, MERKLE_HASH_LEN, null, 0, 0), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root1, MERKLE_HASH_LEN), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root2, MERKLE_HASH_LEN), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root3, MERKLE_HASH_LEN), 0);
     try testing.expectEqualSlices(u8, &root1, &root2);
     try testing.expectEqualSlices(u8, &root2, &root3);
 
@@ -4236,7 +3938,7 @@ test "aegis128l_raf_merkle - root commitment consistency" {
     try testing.expectEqual(ret, 0);
 
     var root4: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root4, MERKLE_HASH_LEN, null, 0, test_data.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root4, MERKLE_HASH_LEN), 0);
     try testing.expect(!std.mem.eql(u8, &root1, &root4));
 
     aegis.aegis128l_raf_close(&ctx);
@@ -4296,7 +3998,7 @@ test "aegis128l_raf_merkle - exact chunk size writes" {
         try testing.expectEqual(ret, 0);
         try testing.expectEqual(bytes_written, chunk_size);
 
-        try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &roots[i], MERKLE_HASH_LEN, null, 0, @as(u64, i + 1) * chunk_size), 0);
+        try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &roots[i], MERKLE_HASH_LEN), 0);
 
         if (i > 0) {
             try testing.expect(!std.mem.eql(u8, &roots[i - 1], &roots[i]));
@@ -4398,13 +4100,12 @@ const FuzzState = struct {
     }
 
     fn reopen(self: *FuzzState) !void {
+        var old_root: [MERKLE_HASH_LEN]u8 = undefined;
         if (self.is_open) {
+            try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&self.ctx, &old_root, MERKLE_HASH_LEN), 0);
             aegis.aegis128l_raf_close(&self.ctx);
             self.is_open = false;
         }
-
-        var old_root: [MERKLE_HASH_LEN]u8 = undefined;
-        try testing.expectEqual(aegis.aegis_raf_merkle_root(&self.merkle_cfg, &old_root, MERKLE_HASH_LEN, null, 0, self.shadow.items.len), 0);
 
         @memset(&self.merkle_buf, 0);
         self.merkle_cfg = .{
@@ -4439,7 +4140,7 @@ const FuzzState = struct {
         try testing.expectEqual(ret, 0);
 
         var new_root: [MERKLE_HASH_LEN]u8 = undefined;
-        try testing.expectEqual(aegis.aegis_raf_merkle_root(&self.merkle_cfg, &new_root, MERKLE_HASH_LEN, null, 0, self.shadow.items.len), 0);
+        try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&self.ctx, &new_root, MERKLE_HASH_LEN), 0);
         try testing.expectEqualSlices(u8, &old_root, &new_root);
     }
 
@@ -4748,12 +4449,12 @@ test "fuzz - incremental vs rebuild consistency" {
     try state.verifyMerkle();
 
     var incremental_root: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&state.merkle_cfg, &incremental_root, MERKLE_HASH_LEN, null, 0, state.shadow.items.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&state.ctx, &incremental_root, MERKLE_HASH_LEN), 0);
 
     try state.reopen();
 
     var rebuilt_root: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&state.merkle_cfg, &rebuilt_root, MERKLE_HASH_LEN, null, 0, state.shadow.items.len), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&state.ctx, &rebuilt_root, MERKLE_HASH_LEN), 0);
     try testing.expectEqualSlices(u8, &incremental_root, &rebuilt_root);
     try state.verifyMerkle();
 }
@@ -4984,7 +4685,7 @@ test "fuzz - different hash lengths" {
         try testing.expectEqual(ret, 0);
 
         var root_copy: [aegis.AEGIS_RAF_MERKLE_HASH_MAX]u8 = undefined;
-        try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg, &root_copy, hash_len, null, 0, data.len), 0);
+        try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &root_copy, hash_len), 0);
 
         aegis.aegis128l_raf_close(&ctx);
 
@@ -5015,7 +4716,7 @@ test "fuzz - different hash lengths" {
         try testing.expectEqual(ret, 0);
 
         var rebuilt_root: [aegis.AEGIS_RAF_MERKLE_HASH_MAX]u8 = undefined;
-        try testing.expectEqual(aegis.aegis_raf_merkle_root(&merkle_cfg2, &rebuilt_root, hash_len, null, 0, data.len), 0);
+        try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx, &rebuilt_root, hash_len), 0);
         try testing.expectEqualSlices(u8, root_copy[0..hash_len], rebuilt_root[0..hash_len]);
 
         ret = aegis.aegis128l_raf_merkle_verify(&ctx, null);
@@ -5355,109 +5056,6 @@ test "fuzz - write then corrupt then detect" {
     }
 }
 
-test "aegis_raf_merkle_root - ctx null with ctx_len > 0 returns error" {
-    var merkle_buf: [256]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    const cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 4,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    var out: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &out, MERKLE_HASH_LEN, null, 1, 0), -1);
-}
-
-test "aegis_raf_merkle_root - ctx non-null with ctx_len 0 succeeds" {
-    var merkle_buf: [256]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    const cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 4,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    var dummy_ctx: [1]u8 = .{0x42};
-    var out: [MERKLE_HASH_LEN]u8 = undefined;
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &out, MERKLE_HASH_LEN, &dummy_ctx, 0, 0), 0);
-}
-
-test "aegis_raf_merkle_root - different context produces different commitment" {
-    try testing.expectEqual(aegis.aegis_init(), 0);
-
-    var merkle_buf: [256]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    const cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 4,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    var ctx_a: [40]u8 = undefined;
-    @memset(&ctx_a, 0xAA);
-    var ctx_b: [40]u8 = undefined;
-    @memset(&ctx_b, 0xBB);
-
-    var root_a: [MERKLE_HASH_LEN]u8 = undefined;
-    var root_b: [MERKLE_HASH_LEN]u8 = undefined;
-
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &root_a, MERKLE_HASH_LEN, &ctx_a, ctx_a.len, 100), 0);
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &root_b, MERKLE_HASH_LEN, &ctx_b, ctx_b.len, 100), 0);
-
-    try testing.expect(!std.mem.eql(u8, &root_a, &root_b));
-}
-
-test "aegis_raf_merkle_root - same context produces same commitment" {
-    try testing.expectEqual(aegis.aegis_init(), 0);
-
-    var merkle_buf: [256]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    const cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
-        .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 4,
-        .user = null,
-        .hash_leaf = xorHashLeaf,
-        .hash_parent = xorHashParent,
-        .hash_empty = xorHashEmpty,
-        .hash_commitment = xorHashCommitment,
-    };
-
-    var ctx_blob: [40]u8 = undefined;
-    @memset(&ctx_blob, 0xCC);
-
-    var root_a: [MERKLE_HASH_LEN]u8 = undefined;
-    var root_b: [MERKLE_HASH_LEN]u8 = undefined;
-
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &root_a, MERKLE_HASH_LEN, &ctx_blob, ctx_blob.len, 42), 0);
-    try testing.expectEqual(aegis.aegis_raf_merkle_root(&cfg, &root_b, MERKLE_HASH_LEN, &ctx_blob, ctx_blob.len, 42), 0);
-
-    try testing.expectEqualSlices(u8, &root_a, &root_b);
-}
-
 test "aegis128l_raf_merkle_commitment - returns 0 with merkle enabled" {
     try testing.expectEqual(aegis.aegis_init(), 0);
 
@@ -5538,26 +5136,28 @@ test "aegis128l_raf_merkle_commitment - returns ENOTSUP without merkle" {
     aegis.aegis128l_raf_close(&ctx);
 }
 
-test "aegis128l_raf_merkle_commitment - matches manual merkle_root with same context" {
+test "aegis128l_raf_merkle_commitment - bound to file identity" {
     try testing.expectEqual(aegis.aegis_init(), 0);
 
-    var file = MemoryFile.init(testing.allocator);
-    defer file.deinit();
+    var file1 = MemoryFile.init(testing.allocator);
+    defer file1.deinit();
+    var file2 = MemoryFile.init(testing.allocator);
+    defer file2.deinit();
 
     var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
     random.bytes(&key);
 
-    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
-    const scratch = aegis.aegis_raf_scratch{ .buf = &scratch_buf, .len = scratch_buf.len };
+    const max_chunks: u64 = 8;
+    var merkle_buf1: [256]u8 = undefined;
+    var merkle_buf2: [256]u8 = undefined;
+    @memset(&merkle_buf1, 0);
+    @memset(&merkle_buf2, 0);
 
-    var merkle_buf: [4096]u8 = undefined;
-    @memset(&merkle_buf, 0);
-
-    const merkle_cfg = aegis.aegis_raf_merkle_config{
-        .buf = &merkle_buf,
-        .len = merkle_buf.len,
+    const merkle_cfg1 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf1,
+        .len = merkle_buf1.len,
         .hash_len = MERKLE_HASH_LEN,
-        .max_chunks = 16,
+        .max_chunks = max_chunks,
         .user = null,
         .hash_leaf = xorHashLeaf,
         .hash_parent = xorHashParent,
@@ -5565,54 +5165,62 @@ test "aegis128l_raf_merkle_commitment - matches manual merkle_root with same con
         .hash_commitment = xorHashCommitment,
     };
 
-    const cfg = aegis.aegis_raf_config{
+    const merkle_cfg2 = aegis.aegis_raf_merkle_config{
+        .buf = &merkle_buf2,
+        .len = merkle_buf2.len,
+        .hash_len = MERKLE_HASH_LEN,
+        .max_chunks = max_chunks,
+        .user = null,
+        .hash_leaf = xorHashLeaf,
+        .hash_parent = xorHashParent,
+        .hash_empty = xorHashEmpty,
+        .hash_commitment = xorHashCommitment,
+    };
+
+    var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) = undefined;
+    const scratch = aegis.aegis_raf_scratch{
+        .buf = &scratch_buf,
+        .len = scratch_buf.len,
+    };
+
+    const cfg1 = aegis.aegis_raf_config{
         .chunk_size = 1024,
         .flags = aegis.AEGIS_RAF_CREATE,
         .scratch = &scratch,
-        .merkle = &merkle_cfg,
+        .merkle = &merkle_cfg1,
     };
 
-    var ctx: aegis.aegis128l_raf_ctx align(32) = undefined;
-    var ret = aegis.aegis128l_raf_create(&ctx, &file.io(), &rng(), &cfg, &key);
+    const cfg2 = aegis.aegis_raf_config{
+        .chunk_size = 1024,
+        .flags = aegis.AEGIS_RAF_CREATE,
+        .scratch = &scratch,
+        .merkle = &merkle_cfg2,
+    };
+
+    var ctx1: aegis.aegis128l_raf_ctx align(32) = undefined;
+    var ctx2: aegis.aegis128l_raf_ctx align(32) = undefined;
+
+    var ret = aegis.aegis128l_raf_create(&ctx1, &file1.io(), &rng(), &cfg1, &key);
+    try testing.expectEqual(ret, 0);
+    ret = aegis.aegis128l_raf_create(&ctx2, &file2.io(), &rng(), &cfg2, &key);
     try testing.expectEqual(ret, 0);
 
-    const test_data = "Test commitment match";
+    const test_data = "Identical data for both files";
     var bytes_written: usize = undefined;
-    ret = aegis.aegis128l_raf_write(&ctx, &bytes_written, test_data.ptr, test_data.len, 0);
+    ret = aegis.aegis128l_raf_write(&ctx1, &bytes_written, test_data.ptr, test_data.len, 0);
+    try testing.expectEqual(ret, 0);
+    ret = aegis.aegis128l_raf_write(&ctx2, &bytes_written, test_data.ptr, test_data.len, 0);
     try testing.expectEqual(ret, 0);
 
-    var commitment: [MERKLE_HASH_LEN]u8 = undefined;
-    ret = aegis.aegis128l_raf_merkle_commitment(&ctx, &commitment, MERKLE_HASH_LEN);
-    try testing.expectEqual(ret, 0);
+    var root1: [MERKLE_HASH_LEN]u8 = undefined;
+    var root2: [MERKLE_HASH_LEN]u8 = undefined;
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx1, &root1, MERKLE_HASH_LEN), 0);
+    try testing.expectEqual(aegis.aegis128l_raf_merkle_commitment(&ctx2, &root2, MERKLE_HASH_LEN), 0);
 
-    // Build the 40-byte context blob manually:
-    // version (2 LE) + alg_id (2 LE) + chunk_size (4 LE) + file_id (32)
-    // version = 1, alg_id = AEGIS_RAF_ALG_128L = 1, chunk_size = 1024
-    // file_id: read from the file header at offset 28
-    var hdr: [aegis.AEGIS_RAF_HEADER_SIZE]u8 = undefined;
-    ret = MemoryFile.read_at(&file, &hdr, aegis.AEGIS_RAF_HEADER_SIZE, 0);
-    try testing.expectEqual(ret, 0);
+    // Different files have different file_ids, so commitments must differ
+    // even when data, key, and chunk_size are identical.
+    try testing.expect(!std.mem.eql(u8, &root1, &root2));
 
-    var manual_ctx: [aegis.AEGIS_RAF_COMMITMENT_CONTEXT_BYTES]u8 = undefined;
-    // version = 1 LE
-    manual_ctx[0] = 1;
-    manual_ctx[1] = 0;
-    // alg_id = 1 LE (AEGIS_RAF_ALG_128L)
-    manual_ctx[2] = 1;
-    manual_ctx[3] = 0;
-    // chunk_size = 1024 = 0x0400 LE
-    manual_ctx[4] = 0x00;
-    manual_ctx[5] = 0x04;
-    manual_ctx[6] = 0x00;
-    manual_ctx[7] = 0x00;
-    // file_id: copy from header at offset 28
-    @memcpy(manual_ctx[8..40], hdr[28..60]);
-
-    var manual_root: [MERKLE_HASH_LEN]u8 = undefined;
-    ret = aegis.aegis_raf_merkle_root(&merkle_cfg, &manual_root, MERKLE_HASH_LEN, &manual_ctx, manual_ctx.len, test_data.len);
-    try testing.expectEqual(ret, 0);
-
-    try testing.expectEqualSlices(u8, &commitment, &manual_root);
-
-    aegis.aegis128l_raf_close(&ctx);
+    aegis.aegis128l_raf_close(&ctx1);
+    aegis.aegis128l_raf_close(&ctx2);
 }

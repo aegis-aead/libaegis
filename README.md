@@ -135,10 +135,6 @@ uint8_t root[32];
 aegis128l_raf_merkle_commitment(&ctx, root, sizeof root);
 ```
 
-`aegis_raf_merkle_root()` is also available for standalone Merkle usage
-without a RAF context, where the caller supplies their own context bytes
-for domain separation.
-
 The tree uses a flat buffer layout with configurable hash callbacks, so it works with any hash function. `aegis_raf_merkle_buffer_size()` computes the required buffer size for a given `max_chunks` and `hash_len`.
 
 ## Bindings

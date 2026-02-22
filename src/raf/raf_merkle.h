@@ -103,4 +103,64 @@ int raf_merkle_clear_range(const aegis_raf_merkle_config *cfg, uint64_t first_ch
  */
 int aegis_raf_merkle_config_validate(const aegis_raf_merkle_config *cfg);
 
+static inline uint32_t
+aegis_raf_merkle_level_count(const aegis_raf_merkle_config *cfg)
+{
+    uint32_t levels = 0;
+    uint64_t count;
+
+    if (cfg == NULL || cfg->max_chunks == 0) {
+        return 0;
+    }
+
+    count = cfg->max_chunks;
+    while (count > 0) {
+        levels++;
+        if (count == 1) {
+            break;
+        }
+        count = (count + 1) / 2;
+    }
+
+    return levels;
+}
+
+static inline int
+aegis_raf_merkle_root(const aegis_raf_merkle_config *cfg,
+                      uint8_t *out, size_t out_len,
+                      const uint8_t *ctx, size_t ctx_len,
+                      uint64_t file_size)
+{
+    uint32_t       levels;
+    size_t         root_offset;
+    const uint8_t *structural_root;
+
+    if (cfg == NULL || cfg->buf == NULL || cfg->max_chunks == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (out == NULL || out_len < cfg->hash_len) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (cfg->hash_commitment == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ctx == NULL && ctx_len > 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (ctx_len == 0) {
+        ctx = NULL;
+    }
+
+    levels          = aegis_raf_merkle_level_count(cfg);
+    root_offset     = raf_merkle_level_offset(cfg->max_chunks, cfg->hash_len, levels - 1);
+    structural_root = cfg->buf + root_offset;
+
+    return cfg->hash_commitment(cfg->user, out, cfg->hash_len,
+                                structural_root, ctx, ctx_len, file_size);
+}
+
 #endif
