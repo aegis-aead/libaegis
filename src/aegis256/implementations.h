@@ -7,10 +7,11 @@
 #include "aegis256.h"
 
 /* Namespacing to avoid conflicts with libsodium */
-#define aegis256_soft_implementation     libaegis_aegis256_soft_implementation
-#define aegis256_aesni_implementation    libaegis_aegis256_aesni_implementation
-#define aegis256_neon_aes_implementation libaegis_aegis256_neon_aes_implementation
-#define aegis256_altivec_implementation  libaegis_aegis256_altivec_implementation
+#define aegis256_soft_implementation      libaegis_aegis256_soft_implementation
+#define aegis256_aesni_implementation     libaegis_aegis256_aesni_implementation
+#define aegis256_neon_aes_implementation  libaegis_aegis256_neon_aes_implementation
+#define aegis256_neon_sha3_implementation libaegis_aegis256_neon_sha3_implementation
+#define aegis256_altivec_implementation   libaegis_aegis256_altivec_implementation
 
 typedef struct aegis256_implementation {
     int (*encrypt_detached)(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size_t mlen,
