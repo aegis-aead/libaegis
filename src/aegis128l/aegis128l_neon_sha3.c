@@ -31,32 +31,64 @@
 #    endif
 
 #    define AES_BLOCK_LENGTH 16
+#    define AES_INVERT_STATE37 1
 
 typedef uint8x16_t aes_block_t;
 
+static const uint8_t ones_arr[] = { 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU,
+                                    0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU, 0xffU };
+
+static inline uint8x16_t fresh_ones() {
+  // The AESE instruction first operand register is both an input and output to
+  // the instruction. If the first operand is used in multiple places, this can
+  // therefore force compilers to emit MOV instructions to duplicate the value.
+  // In AES_ENC0 we use a zero register which would ordinarily have this
+  // problem since the compiler can merge the zero constants together and reuse
+  // them, however compilers typically treat this as a special case since
+  // materializing zero is a zero-cost instruction on many micro-architectures.
+  // For AES_ENC1 we cannot use this trick: materialising 0xFF is not usually
+  // zero-cost so compilers do not treat it specially, however since this
+  // region of the code is so heavy in vector arithmetic, inserting an
+  // additional load instruction here is effectively free.
+  uint8x16_t ret;
+  __asm volatile("ldr %q0, %1": "=w"(ret): "m"(ones_arr));
+  return ret;
+}
+
+#    define AES_BLOCK_NOT(A)          vmvnq_u8((A))
 #    define AES_BLOCK_XOR(A, B)       veorq_u8((A), (B))
+#    define AES_BLOCK_XNOR(A, B)      veor3q_u8((A), (B), vmovq_n_u8(0xFF))
 #    define AES_BLOCK_XOR3(A, B, C)   veor3q_u8((A), (B), (C))
 #    define AES_BLOCK_AND(A, B)       vandq_u8((A), (B))
 #    define AES_BLOCK_LOAD(A)         vld1q_u8(A)
 #    define AES_BLOCK_LOAD_64x2(A, B) vreinterpretq_u8_u64(vsetq_lane_u64((A), vmovq_n_u64(B), 1))
 #    define AES_BLOCK_STORE(A, B)     vst1q_u8((A), (B))
 #    define AES_ENC0(A)               vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), (A)))
+#    define AES_ENC1(A)               vaesmcq_u8(vaeseq_u8(fresh_ones(), (A)))
 #    define AES_ENC(A, B)             AES_BLOCK_XOR(AES_ENC0(A), (B))
 
 static inline void
 aegis128l_update(aes_block_t *const state, const aes_block_t d1, const aes_block_t d2)
 {
-    aes_block_t tmp;
+    // Apply bitwise-NOT to state[3] and state[7] to allow us to use the Arm
+    // SHA3 BCAX instruction.
+    aes_block_t enc7 = AES_ENC1(state[7]);
+    aes_block_t enc6 = AES_ENC0(state[6]);
+    aes_block_t enc5 = AES_ENC0(state[5]);
+    aes_block_t enc4 = AES_ENC0(state[4]);
+    aes_block_t enc3 = AES_ENC1(state[3]);
+    aes_block_t enc2 = AES_ENC0(state[2]);
+    aes_block_t enc1 = AES_ENC0(state[1]);
+    aes_block_t enc0 = AES_ENC0(state[0]);
 
-    tmp      = state[7];
-    state[7] = AES_ENC(state[6], state[7]);
-    state[6] = AES_ENC(state[5], state[6]);
-    state[5] = AES_ENC(state[4], state[5]);
-    state[4] = AES_BLOCK_XOR3(state[4], AES_ENC0(state[3]), d2);
-    state[3] = AES_ENC(state[2], state[3]);
-    state[2] = AES_ENC(state[1], state[2]);
-    state[1] = AES_ENC(state[0], state[1]);
-    state[0] = AES_BLOCK_XOR3(state[0], AES_ENC0(tmp), d1);
+    state[7] = AES_BLOCK_XOR(enc6, state[7]);
+    state[6] = AES_BLOCK_XOR(enc5, state[6]);
+    state[5] = AES_BLOCK_XOR(enc4, state[5]);
+    state[4] = AES_BLOCK_XOR3(enc3, state[4], d2);
+    state[3] = AES_BLOCK_XOR(enc2, state[3]);
+    state[2] = AES_BLOCK_XOR(enc1, state[2]);
+    state[1] = AES_BLOCK_XOR(enc0, state[1]);
+    state[0] = AES_BLOCK_XOR3(enc7, state[0], d1);
 }
 
 #    include "aegis128l_common.h"
