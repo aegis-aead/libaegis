@@ -43,6 +43,7 @@ pub fn build(b: *std.Build) void {
         "src/aegis128x2/aegis128x2_altivec.c",
         "src/aegis128x2/aegis128x2_avx2.c",
         "src/aegis128x2/aegis128x2_neon_aes.c",
+        "src/aegis128x2/aegis128x2_neon_sha3.c",
         "src/aegis128x2/aegis128x2_soft.c",
         "src/aegis128x2/aegis128x2.c",
 
@@ -51,12 +52,14 @@ pub fn build(b: *std.Build) void {
         "src/aegis128x4/aegis128x4_avx2.c",
         "src/aegis128x4/aegis128x4_avx512.c",
         "src/aegis128x4/aegis128x4_neon_aes.c",
+        "src/aegis128x4/aegis128x4_neon_sha3.c",
         "src/aegis128x4/aegis128x4_soft.c",
         "src/aegis128x4/aegis128x4.c",
 
         "src/aegis256/aegis256_aesni.c",
         "src/aegis256/aegis256_altivec.c",
         "src/aegis256/aegis256_neon_aes.c",
+        "src/aegis256/aegis256_neon_sha3.c",
         "src/aegis256/aegis256_soft.c",
         "src/aegis256/aegis256.c",
 
@@ -64,6 +67,7 @@ pub fn build(b: *std.Build) void {
         "src/aegis256x2/aegis256x2_altivec.c",
         "src/aegis256x2/aegis256x2_avx2.c",
         "src/aegis256x2/aegis256x2_neon_aes.c",
+        "src/aegis256x2/aegis256x2_neon_sha3.c",
         "src/aegis256x2/aegis256x2_soft.c",
         "src/aegis256x2/aegis256x2.c",
 
@@ -72,6 +76,7 @@ pub fn build(b: *std.Build) void {
         "src/aegis256x4/aegis256x4_avx2.c",
         "src/aegis256x4/aegis256x4_avx512.c",
         "src/aegis256x4/aegis256x4_neon_aes.c",
+        "src/aegis256x4/aegis256x4_neon_sha3.c",
         "src/aegis256x4/aegis256x4_soft.c",
         "src/aegis256x4/aegis256x4.c",
 

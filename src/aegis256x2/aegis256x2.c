@@ -8,6 +8,7 @@
 #include "aegis256x2_altivec.h"
 #include "aegis256x2_avx2.h"
 #include "aegis256x2_neon_aes.h"
+#include "aegis256x2_neon_sha3.h"
 
 #ifndef HAS_HW_AES
 #    include "aegis256x2_soft.h"
@@ -217,6 +218,10 @@ aegis256x2_pick_best_implementation(void)
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
+    if (aegis_runtime_has_neon_sha3()) {
+        implementation = &aegis256x2_neon_sha3_implementation;
+        return 0;
+    }
     if (aegis_runtime_has_neon_aes()) {
         implementation = &aegis256x2_neon_aes_implementation;
         return 0;
