@@ -1,6 +1,13 @@
 #define RATE      32
 #define ALIGNMENT 32
 
+// If not inverting state[3] and state[7], treat bitwise-NOT operations as
+// no-ops.
+#ifndef AES_INVERT_STATE37
+#    define AES_BLOCK_NOT(A) (A)
+#    define AES_BLOCK_XNOR(A, B) AES_BLOCK_XOR((A), (B))
+#endif
+
 typedef aes_block_t aegis_blocks[8];
 
 static inline void
@@ -25,11 +32,11 @@ aegis128l_init(const uint8_t *key, const uint8_t *nonce, aes_block_t *const stat
     state[0] = AES_BLOCK_XOR(k, n);
     state[1] = c1;
     state[2] = c0;
-    state[3] = c1;
+    state[3] = AES_BLOCK_NOT(c1);
     state[4] = AES_BLOCK_XOR(k, n);
     state[5] = AES_BLOCK_XOR(k, c0);
     state[6] = AES_BLOCK_XOR(k, c1);
-    state[7] = AES_BLOCK_XOR(k, c0);
+    state[7] = AES_BLOCK_XNOR(k, c0);
     for (i = 0; i < 10; i++) {
         aegis128l_update(state, n, k);
     }
@@ -50,14 +57,14 @@ aegis128l_mac(uint8_t *mac, size_t maclen, uint64_t adlen, uint64_t mlen, aes_bl
 
     if (maclen == 16) {
         tmp = AES_BLOCK_XOR(state[6], AES_BLOCK_XOR(state[5], state[4]));
-        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[3], state[2]));
+        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XNOR(state[3], state[2]));
         tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[1], state[0]));
         AES_BLOCK_STORE(mac, tmp);
     } else if (maclen == 32) {
-        tmp = AES_BLOCK_XOR(state[3], state[2]);
+        tmp = AES_BLOCK_XNOR(state[3], state[2]);
         tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[1], state[0]));
         AES_BLOCK_STORE(mac, tmp);
-        tmp = AES_BLOCK_XOR(state[7], state[6]);
+        tmp = AES_BLOCK_XNOR(state[7], state[6]);
         tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[5], state[4]));
         AES_BLOCK_STORE(mac + 16, tmp);
     } else {
@@ -91,9 +98,9 @@ aegis128l_squeeze_keystream(uint8_t *const dst, aes_block_t *const state)
     aes_block_t tmp0, tmp1;
 
     tmp0 = AES_BLOCK_XOR(state[6], state[1]);
-    tmp0 = AES_BLOCK_XOR(tmp0, AES_BLOCK_AND(state[2], state[3]));
+    tmp0 = AES_BLOCK_XOR(tmp0, AES_BLOCK_AND(state[2], AES_BLOCK_NOT(state[3])));
     tmp1 = AES_BLOCK_XOR(state[5], state[2]);
-    tmp1 = AES_BLOCK_XOR(tmp1, AES_BLOCK_AND(state[6], state[7]));
+    tmp1 = AES_BLOCK_XOR(tmp1, AES_BLOCK_AND(state[6], AES_BLOCK_NOT(state[7])));
     AES_BLOCK_STORE(dst, tmp0);
     AES_BLOCK_STORE(dst + AES_BLOCK_LENGTH, tmp1);
 }
@@ -110,8 +117,8 @@ aegis128l_enc(uint8_t *const dst, const uint8_t *const src, aes_block_t *const s
     tmp0 = AES_BLOCK_XOR(tmp0, state[1]);
     tmp1 = AES_BLOCK_XOR(msg1, state[5]);
     tmp1 = AES_BLOCK_XOR(tmp1, state[2]);
-    tmp0 = AES_BLOCK_XOR(tmp0, AES_BLOCK_AND(state[2], state[3]));
-    tmp1 = AES_BLOCK_XOR(tmp1, AES_BLOCK_AND(state[6], state[7]));
+    tmp0 = AES_BLOCK_XOR(tmp0, AES_BLOCK_AND(state[2], AES_BLOCK_NOT(state[3])));
+    tmp1 = AES_BLOCK_XOR(tmp1, AES_BLOCK_AND(state[6], AES_BLOCK_NOT(state[7])));
     AES_BLOCK_STORE(dst, tmp0);
     AES_BLOCK_STORE(dst + AES_BLOCK_LENGTH, tmp1);
 
@@ -129,8 +136,8 @@ aegis128l_dec(uint8_t *const dst, const uint8_t *const src, aes_block_t *const s
     msg0 = AES_BLOCK_XOR(msg0, state[1]);
     msg1 = AES_BLOCK_XOR(msg1, state[5]);
     msg1 = AES_BLOCK_XOR(msg1, state[2]);
-    msg0 = AES_BLOCK_XOR(msg0, AES_BLOCK_AND(state[2], state[3]));
-    msg1 = AES_BLOCK_XOR(msg1, AES_BLOCK_AND(state[6], state[7]));
+    msg0 = AES_BLOCK_XOR(msg0, AES_BLOCK_AND(state[2], AES_BLOCK_NOT(state[3])));
+    msg1 = AES_BLOCK_XOR(msg1, AES_BLOCK_AND(state[6], AES_BLOCK_NOT(state[7])));
     AES_BLOCK_STORE(dst, msg0);
     AES_BLOCK_STORE(dst + AES_BLOCK_LENGTH, msg1);
 
@@ -153,8 +160,8 @@ aegis128l_declast(uint8_t *const dst, const uint8_t *const src, size_t len,
     msg0 = AES_BLOCK_XOR(msg0, state[1]);
     msg1 = AES_BLOCK_XOR(msg1, state[5]);
     msg1 = AES_BLOCK_XOR(msg1, state[2]);
-    msg0 = AES_BLOCK_XOR(msg0, AES_BLOCK_AND(state[2], state[3]));
-    msg1 = AES_BLOCK_XOR(msg1, AES_BLOCK_AND(state[6], state[7]));
+    msg0 = AES_BLOCK_XOR(msg0, AES_BLOCK_AND(state[2], AES_BLOCK_NOT(state[3])));
+    msg1 = AES_BLOCK_XOR(msg1, AES_BLOCK_AND(state[6], AES_BLOCK_NOT(state[7])));
     AES_BLOCK_STORE(pad, msg0);
     AES_BLOCK_STORE(pad + AES_BLOCK_LENGTH, msg1);
 
