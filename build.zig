@@ -107,7 +107,7 @@ pub fn build(b: *std.Build) void {
     const aegis_h = b.addTranslateC(.{
         .root_source_file = b.path("src/include/aegis.h"),
         .target = target,
-        .optimize = optimize,
+        .optimize = .Debug,
     });
     aegis_h.addIncludePath(b.path("src/include"));
     const aegis_mod = aegis_h.createModule();
@@ -115,7 +115,7 @@ pub fn build(b: *std.Build) void {
     const keccak_h = b.addTranslateC(.{
         .root_source_file = b.path("src/common/keccak.h"),
         .target = target,
-        .optimize = optimize,
+        .optimize = .Debug,
     });
     keccak_h.addIncludePath(b.path("src/common"));
     const keccak_mod = keccak_h.createModule();

@@ -9,6 +9,14 @@ const max_msg_len: usize = 1000;
 const max_ad_len: usize = 1000;
 const iterations = 50000;
 
+fn rep(comptime T: type, comptime arr: []const T, comptime n: usize) [arr.len * n]T {
+    var out: [arr.len * n]T = undefined;
+    inline for (0..n) |i| {
+        inline for (arr, 0..) |x, j| out[i * arr.len + j] = x;
+    }
+    return out;
+}
+
 test "aegis-128l - encrypt_detached oneshot" {
     try testing.expectEqual(aegis.aegis_init(), 0);
 
@@ -419,11 +427,11 @@ test "aegis-256 - incremental decryption" {
 test "aegis-128x2 - test vector" {
     const key = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
     const nonce = [_]u8{ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
-    const ad = [_]u8{ 1, 2, 3, 4 } ** 2;
-    const msg = [_]u8{ 4, 5, 6, 7 } ** 30;
-    var c = [_]u8{0} ** msg.len;
-    var mac = [_]u8{0} ** 16;
-    var mac256 = [_]u8{0} ** 32;
+    const ad = rep(u8, &[_]u8{ 1, 2, 3, 4 }, 2);
+    const msg = rep(u8, &[_]u8{ 4, 5, 6, 7 }, 30);
+    var c: [msg.len]u8 = @splat(0);
+    var mac: [16]u8 = @splat(0);
+    var mac256: [32]u8 = @splat(0);
     var ret = aegis.aegis128x2_encrypt_detached(&c, &mac, mac.len, &msg, msg.len, &ad, ad.len, &nonce, &key);
     try testing.expectEqual(ret, 0);
     ret = aegis.aegis128x2_encrypt_detached(&c, &mac256, mac256.len, &msg, msg.len, &ad, ad.len, &nonce, &key);
@@ -435,7 +443,7 @@ test "aegis-128x2 - test vector" {
     const expected_tag_hex = "1aebc200804f405cab637f2adebb6d77";
     try testing.expectEqualSlices(u8, &std.fmt.bytesToHex(mac, .lower), expected_tag_hex);
 
-    var msg2 = [_]u8{0} ** msg.len;
+    var msg2: [msg.len]u8 = @splat(0);
     ret = aegis.aegis128x2_decrypt_detached(&msg2, &c, c.len, &mac, mac.len, &ad, ad.len, &nonce, &key);
     try testing.expectEqual(ret, 0);
     try std.testing.expectEqualSlices(u8, &msg, &msg2);
@@ -521,11 +529,11 @@ test "aegis-128x4 - encrypt_detached oneshot" {
 test "aegis-128x4 - test vector" {
     const key = [_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
     const nonce = [_]u8{ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
-    const ad = [_]u8{ 1, 2, 3, 4 } ** 2;
-    const msg = [_]u8{ 4, 5, 6, 7 } ** 30;
-    var c = [_]u8{0} ** msg.len;
-    var mac = [_]u8{0} ** 16;
-    var mac256 = [_]u8{0} ** 32;
+    const ad = rep(u8, &[_]u8{ 1, 2, 3, 4 }, 2);
+    const msg = rep(u8, &[_]u8{ 4, 5, 6, 7 }, 30);
+    var c: [msg.len]u8 = @splat(0);
+    var mac: [16]u8 = @splat(0);
+    var mac256: [32]u8 = @splat(0);
     var ret = aegis.aegis128x4_encrypt_detached(&c, &mac, mac.len, &msg, msg.len, &ad, ad.len, &nonce, &key);
     try testing.expectEqual(ret, 0);
     ret = aegis.aegis128x4_encrypt_detached(&c, &mac256, mac256.len, &msg, msg.len, &ad, ad.len, &nonce, &key);
@@ -537,7 +545,7 @@ test "aegis-128x4 - test vector" {
     const expected_tag_hex = "0e56ab94e2e85db80f9d54010caabfb4";
     try testing.expectEqualSlices(u8, &std.fmt.bytesToHex(mac, .lower), expected_tag_hex);
 
-    var msg2 = [_]u8{0} ** msg.len;
+    var msg2: [msg.len]u8 = @splat(0);
     ret = aegis.aegis128x4_decrypt_detached(&msg2, &c, c.len, &mac, mac.len, &ad, ad.len, &nonce, &key);
     try testing.expectEqual(ret, 0);
     try std.testing.expectEqualSlices(u8, &msg, &msg2);
@@ -546,11 +554,11 @@ test "aegis-128x4 - test vector" {
 test "aegis-256x2 - test vector" {
     const key = [32]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
     const nonce = [32]u8{ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47 };
-    const ad = [_]u8{ 1, 2, 3, 4 } ** 2;
-    const msg = [_]u8{ 4, 5, 6, 7 } ** 30;
-    var c = [_]u8{0} ** msg.len;
-    var mac = [_]u8{0} ** 16;
-    var mac256 = [_]u8{0} ** 32;
+    const ad = rep(u8, &[_]u8{ 1, 2, 3, 4 }, 2);
+    const msg = rep(u8, &[_]u8{ 4, 5, 6, 7 }, 30);
+    var c: [msg.len]u8 = @splat(0);
+    var mac: [16]u8 = @splat(0);
+    var mac256: [32]u8 = @splat(0);
     var ret = aegis.aegis256x2_encrypt_detached(&c, &mac, mac.len, &msg, msg.len, &ad, ad.len, &nonce, &key);
     try testing.expectEqual(ret, 0);
     ret = aegis.aegis256x2_encrypt_detached(&c, &mac256, mac256.len, &msg, msg.len, &ad, ad.len, &nonce, &key);
@@ -562,7 +570,7 @@ test "aegis-256x2 - test vector" {
     const expected_tag_hex = "635d391828520bf1512763f0c8f5cdbd";
     try testing.expectEqualSlices(u8, &std.fmt.bytesToHex(mac, .lower), expected_tag_hex);
 
-    var msg2 = [_]u8{0} ** msg.len;
+    var msg2: [msg.len]u8 = @splat(0);
     ret = aegis.aegis256x2_decrypt_detached(&msg2, &c, c.len, &mac, mac.len, &ad, ad.len, &nonce, &key);
     try testing.expectEqual(ret, 0);
     try std.testing.expectEqualSlices(u8, &msg, &msg2);
@@ -571,11 +579,11 @@ test "aegis-256x2 - test vector" {
 test "aegis-256x4 - test vector" {
     const key = [32]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
     const nonce = [32]u8{ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47 };
-    const ad = [_]u8{ 1, 2, 3, 4 } ** 2;
-    const msg = [_]u8{ 4, 5, 6, 7 } ** 30;
-    var c = [_]u8{0} ** msg.len;
-    var mac = [_]u8{0} ** 16;
-    var mac256 = [_]u8{0} ** 32;
+    const ad = rep(u8, &[_]u8{ 1, 2, 3, 4 }, 2);
+    const msg = rep(u8, &[_]u8{ 4, 5, 6, 7 }, 30);
+    var c: [msg.len]u8 = @splat(0);
+    var mac: [16]u8 = @splat(0);
+    var mac256: [32]u8 = @splat(0);
     var ret = aegis.aegis256x4_encrypt_detached(&c, &mac, mac.len, &msg, msg.len, &ad, ad.len, &nonce, &key);
     try testing.expectEqual(ret, 0);
     ret = aegis.aegis256x4_encrypt_detached(&c, &mac256, mac256.len, &msg, msg.len, &ad, ad.len, &nonce, &key);
@@ -587,7 +595,7 @@ test "aegis-256x4 - test vector" {
     const expected_tag_hex = "b63b611b13975e2f3dc3cb6c2397bfcd";
     try testing.expectEqualSlices(u8, &std.fmt.bytesToHex(mac, .lower), expected_tag_hex);
 
-    var msg2 = [_]u8{0} ** msg.len;
+    var msg2: [msg.len]u8 = @splat(0);
     ret = aegis.aegis256x4_decrypt_detached(&msg2, &c, c.len, &mac, mac.len, &ad, ad.len, &nonce, &key);
     try testing.expectEqual(ret, 0);
     try std.testing.expectEqualSlices(u8, &msg, &msg2);
@@ -621,9 +629,9 @@ test "aegis128l - Random stream" {
 
 test "aegis128l - MAC" {
     const key = [16]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-    const nonce = [_]u8{0} ** 16;
-    const msg = [_]u8{ 1, 2, 3 } ** 100;
-    const msg2 = [_]u8{ 4, 5, 6, 7, 8 } ** 100 ++ [_]u8{0};
+    const nonce: [16]u8 = @splat(0);
+    const msg = rep(u8, &[_]u8{ 1, 2, 3 }, 100);
+    const msg2 = rep(u8, &[_]u8{ 4, 5, 6, 7, 8 }, 100) ++ [_]u8{0};
     var st0: aegis.aegis128l_mac_state align(32) = undefined;
     aegis.aegis128l_mac_init(&st0, &key, &nonce);
 
@@ -660,9 +668,9 @@ test "aegis128l - MAC" {
 
 test "aegis128x2 - MAC" {
     const key = [16]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-    const nonce = [_]u8{0} ** 16;
-    const msg = [_]u8{ 1, 2, 3 } ** 100;
-    const msg2 = [_]u8{ 4, 5, 6, 7, 8 } ** 100 ++ [_]u8{0};
+    const nonce: [16]u8 = @splat(0);
+    const msg = rep(u8, &[_]u8{ 1, 2, 3 }, 100);
+    const msg2 = rep(u8, &[_]u8{ 4, 5, 6, 7, 8 }, 100) ++ [_]u8{0};
     var st0: aegis.aegis128x2_mac_state align(64) = undefined;
     aegis.aegis128x2_mac_init(&st0, &key, &nonce);
 
@@ -699,9 +707,9 @@ test "aegis128x2 - MAC" {
 
 test "aegis128x4 - MAC" {
     const key = [16]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
-    const nonce = [_]u8{0} ** 16;
-    const msg = [_]u8{ 1, 2, 3 } ** 100 ++ [_]u8{0};
-    const msg2 = [_]u8{ 4, 5, 6, 7, 8 } ** 100;
+    const nonce: [16]u8 = @splat(0);
+    const msg = rep(u8, &[_]u8{ 1, 2, 3 }, 100) ++ [_]u8{0};
+    const msg2 = rep(u8, &[_]u8{ 4, 5, 6, 7, 8 }, 100);
     var st0: aegis.aegis128x4_mac_state align(64) = undefined;
     aegis.aegis128x4_mac_init(&st0, &key, &nonce);
 
@@ -737,8 +745,8 @@ test "aegis128x4 - MAC" {
 }
 
 test "aegis128l - MAC test vector" {
-    const key = [_]u8{ 0x10, 0x01 } ++ [_]u8{0x00} ** (16 - 2);
-    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ [_]u8{0x00} ** (16 - 3);
+    const key = [_]u8{ 0x10, 0x01 } ++ @as([16 - 2]u8, @splat(0x00));
+    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ @as([16 - 3]u8, @splat(0x00));
     var msg: [35]u8 = undefined;
     for (&msg, 0..) |*byte, i| byte.* = @truncate(i);
     var mac128: [16]u8 = undefined;
@@ -766,8 +774,8 @@ test "aegis128l - MAC test vector" {
 }
 
 test "aegis128x2 - MAC test vector" {
-    const key = [_]u8{ 0x10, 0x01 } ++ [_]u8{0x00} ** (16 - 2);
-    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ [_]u8{0x00} ** (16 - 3);
+    const key = [_]u8{ 0x10, 0x01 } ++ @as([16 - 2]u8, @splat(0x00));
+    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ @as([16 - 3]u8, @splat(0x00));
     var msg: [35]u8 = undefined;
     for (&msg, 0..) |*byte, i| byte.* = @truncate(i);
     var mac128: [16]u8 = undefined;
@@ -795,8 +803,8 @@ test "aegis128x2 - MAC test vector" {
 }
 
 test "aegis128x4 - MAC test vector" {
-    const key = [_]u8{ 0x10, 0x01 } ++ [_]u8{0x00} ** (16 - 2);
-    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ [_]u8{0x00} ** (16 - 3);
+    const key = [_]u8{ 0x10, 0x01 } ++ @as([16 - 2]u8, @splat(0x00));
+    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ @as([16 - 3]u8, @splat(0x00));
     var msg: [35]u8 = undefined;
     for (&msg, 0..) |*byte, i| byte.* = @truncate(i);
     var mac128: [16]u8 = undefined;
@@ -824,8 +832,8 @@ test "aegis128x4 - MAC test vector" {
 }
 
 test "aegis256 - MAC test vector" {
-    const key = [_]u8{ 0x10, 0x01 } ++ [_]u8{0x00} ** (32 - 2);
-    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ [_]u8{0x00} ** (32 - 3);
+    const key = [_]u8{ 0x10, 0x01 } ++ @as([32 - 2]u8, @splat(0x00));
+    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ @as([32 - 3]u8, @splat(0x00));
     var msg: [35]u8 = undefined;
     for (&msg, 0..) |*byte, i| byte.* = @truncate(i);
     var mac128: [16]u8 = undefined;
@@ -853,8 +861,8 @@ test "aegis256 - MAC test vector" {
 }
 
 test "aegis256x2 - MAC test vector" {
-    const key = [_]u8{ 0x10, 0x01 } ++ [_]u8{0x00} ** (32 - 2);
-    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ [_]u8{0x00} ** (32 - 3);
+    const key = [_]u8{ 0x10, 0x01 } ++ @as([32 - 2]u8, @splat(0x00));
+    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ @as([32 - 3]u8, @splat(0x00));
     var msg: [35]u8 = undefined;
     for (&msg, 0..) |*byte, i| byte.* = @truncate(i);
     var mac128: [16]u8 = undefined;
@@ -882,8 +890,8 @@ test "aegis256x2 - MAC test vector" {
 }
 
 test "aegis256x4 - MAC test vector" {
-    const key = [_]u8{ 0x10, 0x01 } ++ [_]u8{0x00} ** (32 - 2);
-    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ [_]u8{0x00} ** (32 - 3);
+    const key = [_]u8{ 0x10, 0x01 } ++ @as([32 - 2]u8, @splat(0x00));
+    const nonce = [_]u8{ 0x10, 0x00, 0x02 } ++ @as([32 - 3]u8, @splat(0x00));
     var msg: [35]u8 = undefined;
     for (&msg, 0..) |*byte, i| byte.* = @truncate(i);
     var mac128: [16]u8 = undefined;
