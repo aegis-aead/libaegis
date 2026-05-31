@@ -222,40 +222,41 @@ srm1r_dup16(uint32_t x)
 }
 
 static inline uint32_t
-srm1r_ror16(uint32_t x, unsigned n)
+srm1r_ror16(uint32_t x, unsigned int n)
 {
     /* SRM-1R duplicates the low halfword, so a 16-lane rotate is a 32-bit rotate. */
     return (x >> n) | (x << (32 - n));
 }
 
 static inline uint32_t
-srm1r_ror32(uint32_t x, unsigned n)
+srm1r_ror32(uint32_t x, unsigned int n)
 {
     return (x >> n) | (x << (32 - n));
 }
 
 static inline uint32_t
-srm1r_load_row_words(const SoftAesBlock block, unsigned shift)
+srm1r_load_row_words(const SoftAesBlock block, unsigned int shift)
 {
     return ((block.w0 >> shift) & 0xffu) | (((block.w1 >> shift) & 0xffu) << 8) |
            (((block.w2 >> shift) & 0xffu) << 16) | (((block.w3 >> shift) & 0xffu) << 24);
 }
 
 static inline uint32_t
-srm1r_store_column_word(uint32_t row0, uint32_t row1, uint32_t row2, uint32_t row3, unsigned shift)
+srm1r_store_column_word(
+    uint32_t row0, uint32_t row1, uint32_t row2, uint32_t row3, unsigned int shift)
 {
     return ((row0 >> shift) & 0xffu) | (((row1 >> shift) & 0xffu) << 8) |
            (((row2 >> shift) & 0xffu) << 16) | (((row3 >> shift) & 0xffu) << 24);
 }
 
 static inline uint32_t
-srm1r_gather_row_bit(uint32_t row_word, unsigned bit)
+srm1r_gather_row_bit(uint32_t row_word, unsigned int bit)
 {
     return (((row_word >> bit) & 0x01010101u) * 0x01020408u) >> 24;
 }
 
 static inline uint32_t
-srm1r_pack_rows_bit(uint32_t row0, uint32_t row1, uint32_t row2, uint32_t row3, unsigned bit)
+srm1r_pack_rows_bit(uint32_t row0, uint32_t row1, uint32_t row2, uint32_t row3, unsigned int bit)
 {
     return srm1r_dup16(srm1r_gather_row_bit(row0, bit) | (srm1r_gather_row_bit(row1, bit) << 4) |
                        (srm1r_gather_row_bit(row2, bit) << 8) |
@@ -263,16 +264,16 @@ srm1r_pack_rows_bit(uint32_t row0, uint32_t row1, uint32_t row2, uint32_t row3, 
 }
 
 static inline uint32_t
-srm1r_spread_row_bits(uint32_t nibble, unsigned bit)
+srm1r_spread_row_bits(uint32_t nibble, unsigned int bit)
 {
     nibble &= 0x0fu;
     return ((nibble * 0x00204081u) & 0x01010101u) << bit;
 }
 
 static inline uint32_t
-srm1r_unpack_row_word(const uint32_t planes[8], unsigned row)
+srm1r_unpack_row_word(const uint32_t planes[8], unsigned int row)
 {
-    const unsigned lane_shift = 4u * row;
+    const unsigned int lane_shift = 4u * row;
 
     return srm1r_spread_row_bits(planes[0] >> lane_shift, 7) |
            srm1r_spread_row_bits(planes[1] >> lane_shift, 6) |
