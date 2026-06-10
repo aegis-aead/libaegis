@@ -48,24 +48,29 @@ AES_BLOCK_STORE(uint8_t *a, const aes_block_t b)
     softaes_block_store(a + 16, b.b1);
 }
 
-static inline aes_block_t
-AES_ENC(const aes_block_t a, const aes_block_t b)
-{
-    return (aes_block_t) { softaes_block_encrypt(a.b0, b.b0), softaes_block_encrypt(a.b1, b.b1) };
-}
-
 static inline void
 aegis256x2_update(aes_block_t *const state, const aes_block_t d)
 {
-    aes_block_t tmp;
+    SoftAesBlock in[6], rk[6], out[6];
+    size_t       i;
 
-    tmp      = state[5];
-    state[5] = AES_ENC(state[4], state[5]);
-    state[4] = AES_ENC(state[3], state[4]);
-    state[3] = AES_ENC(state[2], state[3]);
-    state[2] = AES_ENC(state[1], state[2]);
-    state[1] = AES_ENC(state[0], state[1]);
-    state[0] = AES_BLOCK_XOR(AES_ENC(tmp, state[0]), d);
+#    define AEGIS_UPDATE_LANE(FIELD)                \
+        do {                                        \
+            for (i = 0; i < 6; i++) {               \
+                in[i] = state[(i + 5) % 6].FIELD;   \
+                rk[i] = state[i].FIELD;             \
+            }                                       \
+            softaes_blocks_encrypt_x6(out, in, rk); \
+            for (i = 0; i < 6; i++) {               \
+                state[i].FIELD = out[i];            \
+            }                                       \
+        } while (0)
+
+    AEGIS_UPDATE_LANE(b0);
+    AEGIS_UPDATE_LANE(b1);
+#    undef AEGIS_UPDATE_LANE
+
+    state[0] = AES_BLOCK_XOR(state[0], d);
 }
 
 #    include "aegis256x2_common.h"

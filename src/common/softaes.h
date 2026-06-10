@@ -6,8 +6,8 @@
 #include "common.h"
 
 /* Namespacing to avoid conflicts with libsodium */
-#define softaes_block_encrypt libaegis_softaes_block_encrypt
-#define _aes_lut              libaegis__aes_lut
+#define softaes_blocks_encrypt_x8 libaegis_softaes_blocks_encrypt_x8
+#define softaes_blocks_encrypt_x6 libaegis_softaes_blocks_encrypt_x6
 
 typedef struct SoftAesBlock {
     uint32_t w0;
@@ -16,7 +16,13 @@ typedef struct SoftAesBlock {
     uint32_t w3;
 } SoftAesBlock;
 
-SoftAesBlock softaes_block_encrypt(const SoftAesBlock block, const SoftAesBlock rk);
+/* Compute out[i] = AESRound(in[i]) ^ rk[i] for all blocks of an AEGIS state update at once.
+ * out may alias rk, but in must not overlap with out. */
+void softaes_blocks_encrypt_x8(SoftAesBlock out[8], const SoftAesBlock in[8],
+                               const SoftAesBlock rk[8]);
+
+void softaes_blocks_encrypt_x6(SoftAesBlock out[6], const SoftAesBlock in[6],
+                               const SoftAesBlock rk[6]);
 
 static inline SoftAesBlock
 softaes_block_load(const uint8_t in[16])

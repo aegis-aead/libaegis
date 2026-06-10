@@ -145,7 +145,7 @@ static const uint32_t* const LUT1 = _aes_lut + 1 * 256;
 static const uint32_t* const LUT2 = _aes_lut + 2 * 256;
 static const uint32_t* const LUT3 = _aes_lut + 3 * 256;
 
-SoftAesBlock
+static SoftAesBlock
 softaes_block_encrypt(const SoftAesBlock block, const SoftAesBlock rk)
 {
     SoftAesBlock   out;
@@ -202,133 +202,290 @@ softaes_block_encrypt(const SoftAesBlock block, const SoftAesBlock rk)
 
     return out;
 }
+
+void
+softaes_blocks_encrypt_x8(SoftAesBlock out[8], const SoftAesBlock in[8], const SoftAesBlock rk[8])
+{
+    size_t i;
+
+    for (i = 0; i < 8; i++) {
+        out[i] = softaes_block_encrypt(in[i], rk[i]);
+    }
+}
+
+void
+softaes_blocks_encrypt_x6(SoftAesBlock out[6], const SoftAesBlock in[6], const SoftAesBlock rk[6])
+{
+    size_t i;
+
+    for (i = 0; i < 6; i++) {
+        out[i] = softaes_block_encrypt(in[i], rk[i]);
+    }
+}
 #else
 
 /*
- * Without FAVOR_PERFORMANCE the round is computed with SRM-1R, a bitsliced
- * representation that holds the block as eight 32-bit bit planes (the real
- * 16 lanes are duplicated into the high halfword so a row rotation is a
- * plain 32-bit rotate). ShiftRows is folded into the input packing, SubBytes
- * is a gate-only Boolean S-box circuit, and MixColumns is a fixed sequence of
- * rotations and XORs. No step indexes memory with secret data, so the round
- * is constant-time on every platform.
+ * Without FAVOR_PERFORMANCE, the AES rounds of a whole AEGIS state update are
+ * computed at once on a bitsliced representation: up to eight independent
+ * blocks are spread across 32 words of 32 bits, grouped as four pairs of
+ * blocks going through identical, independent circuits. SubBytes is a
+ * gate-only Boolean S-box, ShiftRows is a word rotation and MixColumns a
+ * fixed sequence of XORs, so no step indexes memory with secret data and the
+ * rounds are constant-time on every platform.
+ *
+ * In the bitsliced layout, bit-plane k of group g lives in word 4k+g: each
+ * bit-plane's four group lanes are adjacent isomorphic words, which SLP-class
+ * optimizers merge into vector registers on 64-bit targets, while the code
+ * remains plain sequential 32-bit operations for smaller CPUs. When vector
+ * extensions are available, the S-box is evaluated explicitly on the lanes of
+ * 4x32-bit vectors instead of relying on autovectorization.
  */
 
-static inline uint32_t
-srm1r_dup16(uint32_t x)
-{
-    x &= 0xffff;
-    return x | (x << 16);
-}
+#    define SWAPMOVE(a, b, mask, n)                     \
+        do {                                            \
+            const uint32_t tmp = (b ^ (a >> n)) & mask; \
+            b ^= tmp;                                   \
+            a ^= (tmp << n);                            \
+        } while (0)
 
-static inline uint32_t
-srm1r_ror16(uint32_t x, unsigned int n)
-{
-    /* SRM-1R duplicates the low halfword, so a 16-lane rotate is a 32-bit rotate. */
-    return (x >> n) | (x << (32 - n));
-}
+typedef CRYPTO_ALIGN(32) uint32_t AesBlocks[32];
 
-static inline uint32_t
-srm1r_ror32(uint32_t x, unsigned int n)
-{
-    return (x >> n) | (x << (32 - n));
-}
+#    if (defined(__clang__) || defined(__GNUC__)) && defined(NATIVE_LITTLE_ENDIAN) && \
+        (defined(__SSE2__) || defined(__ARM_NEON) || defined(__wasm_simd128__) ||     \
+         defined(__ALTIVEC__)) &&                                                     \
+        !defined(AEGIS_NO_VECTOR_SBOX)
+#        define SBOX_VECTORIZED
+#    endif
 
-static inline uint32_t
-srm1r_load_row_words(const SoftAesBlock block, unsigned int shift)
-{
-    return ((block.w0 >> shift) & 0xffu) | (((block.w1 >> shift) & 0xffu) << 8) |
-           (((block.w2 >> shift) & 0xffu) << 16) | (((block.w3 >> shift) & 0xffu) << 24);
-}
+#    ifdef SBOX_VECTORIZED
 
-static inline uint32_t
-srm1r_store_column_word(
-    uint32_t row0, uint32_t row1, uint32_t row2, uint32_t row3, unsigned int shift)
-{
-    return ((row0 >> shift) & 0xffu) | (((row1 >> shift) & 0xffu) << 8) |
-           (((row2 >> shift) & 0xffu) << 16) | (((row3 >> shift) & 0xffu) << 24);
-}
+typedef uint32_t Vec __attribute__((vector_size(16)));
+typedef uint8_t  VecBytes __attribute__((vector_size(16)));
 
-static inline uint32_t
-srm1r_gather_row_bit(uint32_t row_word, unsigned int bit)
-{
-    return (((row_word >> bit) & 0x01010101u) * 0x01020408u) >> 24;
-}
-
-static inline uint32_t
-srm1r_pack_rows_bit(uint32_t row0, uint32_t row1, uint32_t row2, uint32_t row3, unsigned int bit)
-{
-    return srm1r_dup16(srm1r_gather_row_bit(row0, bit) | (srm1r_gather_row_bit(row1, bit) << 4) |
-                       (srm1r_gather_row_bit(row2, bit) << 8) |
-                       (srm1r_gather_row_bit(row3, bit) << 12));
-}
-
-static inline uint32_t
-srm1r_spread_row_bits(uint32_t nibble, unsigned int bit)
-{
-    nibble &= 0x0fu;
-    return ((nibble * 0x00204081u) & 0x01010101u) << bit;
-}
-
-static inline uint32_t
-srm1r_unpack_row_word(const uint32_t planes[8], unsigned int row)
-{
-    const unsigned int lane_shift = 4u * row;
-
-    return srm1r_spread_row_bits(planes[0] >> lane_shift, 7) |
-           srm1r_spread_row_bits(planes[1] >> lane_shift, 6) |
-           srm1r_spread_row_bits(planes[2] >> lane_shift, 5) |
-           srm1r_spread_row_bits(planes[3] >> lane_shift, 4) |
-           srm1r_spread_row_bits(planes[4] >> lane_shift, 3) |
-           srm1r_spread_row_bits(planes[5] >> lane_shift, 2) |
-           srm1r_spread_row_bits(planes[6] >> lane_shift, 1) |
-           srm1r_spread_row_bits(planes[7] >> lane_shift, 0);
-}
+#        define LANEROT1(V) __builtin_shufflevector((V), (V), 1, 2, 3, 0)
+#        define LANEROT2(V) __builtin_shufflevector((V), (V), 2, 3, 0, 1)
 
 static inline void
-srm1r_pack_planes(uint32_t planes[8], uint32_t row0, uint32_t row1, uint32_t row2, uint32_t row3)
+sbox_vec(Vec u[8])
 {
-    planes[0] = srm1r_pack_rows_bit(row0, row1, row2, row3, 7);
-    planes[1] = srm1r_pack_rows_bit(row0, row1, row2, row3, 6);
-    planes[2] = srm1r_pack_rows_bit(row0, row1, row2, row3, 5);
-    planes[3] = srm1r_pack_rows_bit(row0, row1, row2, row3, 4);
-    planes[4] = srm1r_pack_rows_bit(row0, row1, row2, row3, 3);
-    planes[5] = srm1r_pack_rows_bit(row0, row1, row2, row3, 2);
-    planes[6] = srm1r_pack_rows_bit(row0, row1, row2, row3, 1);
-    planes[7] = srm1r_pack_rows_bit(row0, row1, row2, row3, 0);
+    const Vec s0  = u[1] ^ u[4];
+    const Vec s1  = u[5] ^ u[7];
+    const Vec s2  = u[3] ^ s0;
+    const Vec s3  = u[0] ^ u[2];
+    const Vec q0  = s1 ^ s2;
+    const Vec s4  = u[0] ^ u[6];
+    const Vec s5  = u[2] ^ u[6];
+    const Vec s6  = u[3] ^ s1;
+    const Vec s7  = u[5] ^ s3;
+    const Vec q1  = s1 ^ s5;
+    const Vec q2  = u[2] ^ q0;
+    const Vec q3  = s4 ^ s2;
+    const Vec q4  = s3 ^ q0;
+    const Vec s8  = u[4] ^ s3;
+    const Vec q5  = s6 ^ s8;
+    const Vec q6  = u[2] ^ u[3];
+    const Vec q7  = u[6] ^ s2;
+    const Vec s9  = u[6] ^ s0;
+    const Vec q8  = s3 ^ s9;
+    const Vec q9  = s4 ^ s6;
+    const Vec q10 = s0 ^ s5;
+    const Vec q12 = u[7] ^ s2;
+    const Vec q13 = u[1] ^ s7;
+    const Vec q14 = u[7] ^ s3;
+    const Vec q15 = s2 ^ s7;
+    const Vec q16 = u[1] ^ s1;
+    const Vec q17 = u[1] ^ u[7];
+    const Vec q11 = u[5];
+
+    const Vec t20 = q6 & q12;
+    const Vec t21 = q3 & q14;
+    const Vec t22 = q1 & q16;
+    const Vec t23 = q2 & q17;
+    const Vec x0  = ((q3 | q14) ^ (q0 & q7)) ^ (t20 ^ t22);
+    const Vec x1  = ((q4 | q13) ^ (q10 & q11)) ^ (t21 ^ t20);
+    const Vec x2  = ((q2 | q17) ^ (q5 & q9)) ^ (t21 ^ t22);
+    const Vec x3  = ((q8 | q15) ^ t23) ^ (t21 ^ (q4 & q13));
+
+    const Vec a   = x1 & ~x3;
+    const Vec b   = x0 & ~x3;
+    const Vec c   = x3 & ~x1;
+    const Vec d   = x2 & ~x1;
+    const Vec e   = x0 ^ a;
+    const Vec y0  = x3 ^ (x2 & ~e);
+    const Vec f   = x1 ^ b;
+    const Vec y1  = c ^ (x2 & f);
+    const Vec g   = x2 ^ c;
+    const Vec y2  = x1 ^ (x0 & ~g);
+    const Vec h   = x3 ^ d;
+    const Vec y3  = a ^ (x0 & h);
+    const Vec y02 = y2 ^ y0;
+    const Vec y13 = y3 ^ y1;
+    const Vec y23 = y3 ^ y2;
+    const Vec y01 = y1 ^ y0;
+    const Vec y00 = y02 ^ y13;
+
+    const Vec a0  = y01 & q11;
+    const Vec a1  = y0 & q12;
+    const Vec a2  = y1 & q0;
+    const Vec a3  = y23 & q17;
+    const Vec a4  = y2 & q5;
+    const Vec a5  = y3 & q15;
+    const Vec a6  = y13 & q14;
+    const Vec a7  = y00 & q16;
+    const Vec a8  = y02 & q13;
+    const Vec a9  = y01 & q7;
+    const Vec a10 = y0 & q10;
+    const Vec a11 = y1 & q6;
+    const Vec a12 = y23 & q2;
+    const Vec a13 = y2 & q9;
+    const Vec a14 = y3 & q8;
+    const Vec a15 = y13 & q3;
+    const Vec a16 = y00 & q1;
+    const Vec a17 = y02 & q4;
+
+    const Vec r0  = a1 ^ a5;
+    const Vec r1  = a9 ^ a15;
+    const Vec r2  = a4 ^ r0;
+    const Vec r3  = a2 ^ a10;
+    const Vec r4  = a11 ^ a17;
+    const Vec r5  = a8 ^ r1;
+    const Vec r6  = a0 ^ a16;
+    const Vec r7  = a7 ^ a13;
+    const Vec r8  = a11 ^ a14;
+    const Vec r9  = r3 ^ r4;
+    const Vec r10 = r5 ^ r6;
+    const Vec r11 = r2 ^ r9;
+    const Vec r12 = a3 ^ r0;
+    const Vec r13 = r7 ^ r8;
+    const Vec r14 = r12 ^ r13;
+    u[0]          = r10 ^ r14;
+    const Vec r15 = a6 ^ a10;
+    const Vec r16 = r15 ^ r2;
+    u[1]          = ~(r10 ^ r16);
+    u[2]          = ~(a2 ^ r2);
+    const Vec r17 = a12 ^ a13;
+    const Vec r18 = a15 ^ r17;
+    u[3]          = r18 ^ r11;
+    const Vec r19 = a1 ^ a14;
+    const Vec r20 = a17 ^ r3;
+    const Vec r21 = r7 ^ r19;
+    const Vec r22 = r5 ^ r20;
+    u[4]          = r21 ^ r22;
+    const Vec r23 = a9 ^ a12;
+    u[5]          = r8 ^ r23;
+    u[6]          = ~(r1 ^ r4);
+    u[7]          = ~(a16 ^ r11);
+}
+
+/* Rotate the 32-bit words of group 1 left by 24, group 2 by 16 and group 3 by 8. The rotation
+ * amounts are all multiples of 8, so this is a single byte shuffle per bit-plane vector. */
+static inline Vec
+shiftrows_vec(const Vec v)
+{
+    const VecBytes b = (VecBytes) v;
+
+    return (Vec) __builtin_shufflevector(b, b, 0, 1, 2, 3, 5, 6, 7, 4, 10, 11, 8, 9, 15, 12, 13,
+                                         14);
+}
+
+/* Bitsliced mixcolumns: with D_k = V_k ^ rot1(V_k) and S_k the XOR of the three other lanes of
+ * V_k, the new bit-plane k is D_{k+1} ^ S_k, with the reduction term D_0 also folded into planes
+ * 3, 4, 6 and 7. Scheduled so that each D_k is consumed as soon as it is produced to keep the
+ * number of live vectors low. */
+static inline void
+mixcolumns_vec(Vec u[8])
+{
+    const Vec r0 = LANEROT1(u[0]);
+    const Vec d0 = u[0] ^ r0;
+    const Vec s0 = r0 ^ LANEROT2(d0);
+    const Vec r1 = LANEROT1(u[1]);
+    const Vec d1 = u[1] ^ r1;
+    const Vec s1 = r1 ^ LANEROT2(d1);
+    const Vec r2 = LANEROT1(u[2]);
+    const Vec d2 = u[2] ^ r2;
+    const Vec s2 = r2 ^ LANEROT2(d2);
+    const Vec r3 = LANEROT1(u[3]);
+    const Vec d3 = u[3] ^ r3;
+    const Vec s3 = r3 ^ LANEROT2(d3);
+    const Vec r4 = LANEROT1(u[4]);
+    const Vec d4 = u[4] ^ r4;
+    const Vec s4 = r4 ^ LANEROT2(d4);
+    const Vec r5 = LANEROT1(u[5]);
+    const Vec d5 = u[5] ^ r5;
+    const Vec s5 = r5 ^ LANEROT2(d5);
+    const Vec r6 = LANEROT1(u[6]);
+    const Vec d6 = u[6] ^ r6;
+    const Vec s6 = r6 ^ LANEROT2(d6);
+    const Vec r7 = LANEROT1(u[7]);
+    const Vec d7 = u[7] ^ r7;
+    const Vec s7 = r7 ^ LANEROT2(d7);
+
+    u[0] = d1 ^ s0;
+    u[1] = d2 ^ s1;
+    u[2] = d3 ^ s2;
+    u[3] = d4 ^ d0 ^ s3;
+    u[4] = d5 ^ d0 ^ s4;
+    u[5] = d6 ^ s5;
+    u[6] = d7 ^ d0 ^ s6;
+    u[7] = d0 ^ s7;
 }
 
 static void
-srm1r_subbytes(uint32_t planes[8])
+aes_round(AesBlocks st)
 {
-    const uint32_t s0  = planes[1] ^ planes[4];
-    const uint32_t s1  = planes[5] ^ planes[7];
-    const uint32_t s2  = planes[3] ^ s0;
-    const uint32_t s3  = planes[0] ^ planes[2];
+    Vec    u[8];
+    size_t i;
+
+    memcpy(u, st, sizeof(AesBlocks));
+
+    sbox_vec(u);
+
+    for (i = 0; i < 8; i++) {
+        u[i] = shiftrows_vec(u[i]);
+    }
+
+    mixcolumns_vec(u);
+
+    memcpy(st, u, sizeof(AesBlocks));
+}
+
+#    else
+
+/* The scalar fallback uses the same permuted layout as the vectorized code. The sbox is
+ * evaluated one group at a time to keep register pressure low on 32-bit CPUs, but shiftrows
+ * and mixcolumns work on adjacent isomorphic quads that compilers with vector units can merge
+ * into wide registers. */
+static void
+sbox(uint32_t *u)
+{
+    const uint32_t s0  = u[4] ^ u[16];
+    const uint32_t s1  = u[20] ^ u[28];
+    const uint32_t s2  = u[12] ^ s0;
+    const uint32_t s3  = u[0] ^ u[8];
     const uint32_t q0  = s1 ^ s2;
-    const uint32_t s4  = planes[0] ^ planes[6];
-    const uint32_t s5  = planes[2] ^ planes[6];
-    const uint32_t s6  = planes[3] ^ s1;
-    const uint32_t s7  = planes[5] ^ s3;
+    const uint32_t s4  = u[0] ^ u[24];
+    const uint32_t s5  = u[8] ^ u[24];
+    const uint32_t s6  = u[12] ^ s1;
+    const uint32_t s7  = u[20] ^ s3;
     const uint32_t q1  = s1 ^ s5;
-    const uint32_t q2  = planes[2] ^ q0;
+    const uint32_t q2  = u[8] ^ q0;
     const uint32_t q3  = s4 ^ s2;
     const uint32_t q4  = s3 ^ q0;
-    const uint32_t s8  = planes[4] ^ s3;
+    const uint32_t s8  = u[16] ^ s3;
     const uint32_t q5  = s6 ^ s8;
-    const uint32_t q6  = planes[2] ^ planes[3];
-    const uint32_t q7  = planes[6] ^ s2;
-    const uint32_t s9  = planes[6] ^ s0;
+    const uint32_t q6  = u[8] ^ u[12];
+    const uint32_t q7  = u[24] ^ s2;
+    const uint32_t s9  = u[24] ^ s0;
     const uint32_t q8  = s3 ^ s9;
     const uint32_t q9  = s4 ^ s6;
     const uint32_t q10 = s0 ^ s5;
-    const uint32_t q12 = planes[7] ^ s2;
-    const uint32_t q13 = planes[1] ^ s7;
-    const uint32_t q14 = planes[7] ^ s3;
+    const uint32_t q12 = u[28] ^ s2;
+    const uint32_t q13 = u[4] ^ s7;
+    const uint32_t q14 = u[28] ^ s3;
     const uint32_t q15 = s2 ^ s7;
-    const uint32_t q16 = planes[1] ^ s1;
-    const uint32_t q17 = planes[1] ^ planes[7];
-    const uint32_t q11 = planes[5];
+    const uint32_t q16 = u[4] ^ s1;
+    const uint32_t q17 = u[4] ^ u[28];
+    const uint32_t q11 = u[20];
 
     const uint32_t t20 = q6 & q12;
     const uint32_t t21 = q3 & q14;
@@ -391,88 +548,243 @@ srm1r_subbytes(uint32_t planes[8])
     const uint32_t r12 = a3 ^ r0;
     const uint32_t r13 = r7 ^ r8;
     const uint32_t r14 = r12 ^ r13;
-    planes[0]          = r10 ^ r14;
+    u[0]               = r10 ^ r14;
     const uint32_t r15 = a6 ^ a10;
     const uint32_t r16 = r15 ^ r2;
-    planes[1]          = ~(r10 ^ r16);
-    planes[2]          = ~(a2 ^ r2);
+    u[4]               = ~(r10 ^ r16);
+    u[8]               = ~(a2 ^ r2);
     const uint32_t r17 = a12 ^ a13;
     const uint32_t r18 = a15 ^ r17;
-    planes[3]          = r18 ^ r11;
+    u[12]              = r18 ^ r11;
     const uint32_t r19 = a1 ^ a14;
     const uint32_t r20 = a17 ^ r3;
     const uint32_t r21 = r7 ^ r19;
     const uint32_t r22 = r5 ^ r20;
-    planes[4]          = r21 ^ r22;
+    u[16]              = r21 ^ r22;
     const uint32_t r23 = a9 ^ a12;
-    planes[5]          = r8 ^ r23;
-    planes[6]          = ~(r1 ^ r4);
-    planes[7]          = ~(a16 ^ r11);
+    u[20]              = r8 ^ r23;
+    u[24]              = ~(r1 ^ r4);
+    u[28]              = ~(a16 ^ r11);
 }
 
 static void
-srm1r_mix_columns(uint32_t planes[8])
+sboxes(AesBlocks st)
 {
-    const uint32_t adj0  = srm1r_ror16(planes[0], 4);
-    const uint32_t adj1  = srm1r_ror16(planes[1], 4);
-    const uint32_t adj2  = srm1r_ror16(planes[2], 4);
-    const uint32_t adj3  = srm1r_ror16(planes[3], 4);
-    const uint32_t adj4  = srm1r_ror16(planes[4], 4);
-    const uint32_t adj5  = srm1r_ror16(planes[5], 4);
-    const uint32_t adj6  = srm1r_ror16(planes[6], 4);
-    const uint32_t adj7  = srm1r_ror16(planes[7], 4);
-    const uint32_t pair0 = planes[0] ^ adj0;
-    const uint32_t pair1 = planes[1] ^ adj1;
-    const uint32_t pair2 = planes[2] ^ adj2;
-    const uint32_t pair3 = planes[3] ^ adj3;
-    const uint32_t pair4 = planes[4] ^ adj4;
-    const uint32_t pair5 = planes[5] ^ adj5;
-    const uint32_t pair6 = planes[6] ^ adj6;
-    const uint32_t pair7 = planes[7] ^ adj7;
-    const uint32_t opp0  = srm1r_ror16(pair0, 8);
-    const uint32_t opp1  = srm1r_ror16(pair1, 8);
-    const uint32_t opp2  = srm1r_ror16(pair2, 8);
-    const uint32_t opp3  = srm1r_ror16(pair3, 8);
-    const uint32_t opp4  = srm1r_ror16(pair4, 8);
-    const uint32_t opp5  = srm1r_ror16(pair5, 8);
-    const uint32_t opp6  = srm1r_ror16(pair6, 8);
-    const uint32_t opp7  = srm1r_ror16(pair7, 8);
+    size_t i;
 
-    planes[0] = pair1 ^ adj0 ^ opp0;
-    planes[1] = pair2 ^ adj1 ^ opp1;
-    planes[2] = pair3 ^ adj2 ^ opp2;
-    planes[3] = pair4 ^ adj3 ^ opp3 ^ pair0;
-    planes[4] = pair5 ^ adj4 ^ opp4 ^ pair0;
-    planes[5] = pair6 ^ adj5 ^ opp5;
-    planes[6] = pair7 ^ adj6 ^ opp6 ^ pair0;
-    planes[7] = pair0 ^ adj7 ^ opp7;
+    for (i = 0; i < 4; i++) {
+        sbox(st + i);
+    }
 }
 
-SoftAesBlock
-softaes_block_encrypt(const SoftAesBlock block, const SoftAesBlock rk)
+static void
+shiftrows(AesBlocks st)
 {
-    SoftAesBlock out;
-    uint32_t     planes[8];
-    uint32_t     row0, row1, row2, row3;
+    size_t i;
 
-    row0 = srm1r_load_row_words(block, 0);
-    row1 = srm1r_ror32(srm1r_load_row_words(block, 8), 8);
-    row2 = srm1r_ror32(srm1r_load_row_words(block, 16), 16);
-    row3 = srm1r_ror32(srm1r_load_row_words(block, 24), 24);
-    srm1r_pack_planes(planes, row0, row1, row2, row3);
+    for (i = 0; i < 32; i += 4) {
+        st[i + 1] = ROTL32(st[i + 1], 24);
+        st[i + 2] = ROTL32(st[i + 2], 16);
+        st[i + 3] = ROTL32(st[i + 3], 8);
+    }
+}
 
-    srm1r_subbytes(planes);
-    srm1r_mix_columns(planes);
+static void
+mixcolumns(AesBlocks st)
+{
+    uint32_t t2_0, t2_1, t2_2, t2_3;
+    uint32_t t, t_bis, t0_0, t0_1, t0_2, t0_3;
+    uint32_t t1_0, t1_1, t1_2, t1_3;
 
-    row0   = srm1r_unpack_row_word(planes, 0);
-    row1   = srm1r_unpack_row_word(planes, 1);
-    row2   = srm1r_unpack_row_word(planes, 2);
-    row3   = srm1r_unpack_row_word(planes, 3);
-    out.w0 = srm1r_store_column_word(row0, row1, row2, row3, 0) ^ rk.w0;
-    out.w1 = srm1r_store_column_word(row0, row1, row2, row3, 8) ^ rk.w1;
-    out.w2 = srm1r_store_column_word(row0, row1, row2, row3, 16) ^ rk.w2;
-    out.w3 = srm1r_store_column_word(row0, row1, row2, row3, 24) ^ rk.w3;
+    t2_0   = st[0] ^ st[1];
+    t2_1   = st[1] ^ st[2];
+    t2_2   = st[2] ^ st[3];
+    t2_3   = st[3] ^ st[0];
+    t0_0   = st[28] ^ st[29];
+    t0_1   = st[29] ^ st[30];
+    t0_2   = st[30] ^ st[31];
+    t0_3   = st[31] ^ st[28];
+    t      = st[28];
+    st[28] = t2_0 ^ t0_2 ^ st[29];
+    st[29] = t2_1 ^ t0_2 ^ t;
+    t      = st[30];
+    st[30] = t2_2 ^ t0_0 ^ st[31];
+    st[31] = t2_3 ^ t0_0 ^ t;
+    t1_0   = st[24] ^ st[25];
+    t1_1   = st[25] ^ st[26];
+    t1_2   = st[26] ^ st[27];
+    t1_3   = st[27] ^ st[24];
+    t      = st[24];
+    st[24] = t0_0 ^ t2_0 ^ st[25] ^ t1_2;
+    t_bis  = st[25];
+    st[25] = t0_1 ^ t2_1 ^ t1_2 ^ t;
+    t      = st[26];
+    st[26] = t0_2 ^ t2_2 ^ t1_3 ^ t_bis;
+    st[27] = t0_3 ^ t2_3 ^ t1_0 ^ t;
+    t0_0   = st[20] ^ st[21];
+    t0_1   = st[21] ^ st[22];
+    t0_2   = st[22] ^ st[23];
+    t0_3   = st[23] ^ st[20];
+    t      = st[20];
+    st[20] = t1_0 ^ t0_1 ^ st[23];
+    t_bis  = st[21];
+    st[21] = t1_1 ^ t0_2 ^ t;
+    t      = st[22];
+    st[22] = t1_2 ^ t0_3 ^ t_bis;
+    st[23] = t1_3 ^ t0_0 ^ t;
+    t1_0   = st[16] ^ st[17];
+    t1_1   = st[17] ^ st[18];
+    t1_2   = st[18] ^ st[19];
+    t1_3   = st[19] ^ st[16];
+    t      = st[16];
+    st[16] = t0_0 ^ t2_0 ^ t1_1 ^ st[19];
+    t_bis  = st[17];
+    st[17] = t0_1 ^ t2_1 ^ t1_2 ^ t;
+    t      = st[18];
+    st[18] = t0_2 ^ t2_2 ^ t1_3 ^ t_bis;
+    st[19] = t0_3 ^ t2_3 ^ t1_0 ^ t;
+    t0_0   = st[12] ^ st[13];
+    t0_1   = st[13] ^ st[14];
+    t0_2   = st[14] ^ st[15];
+    t0_3   = st[15] ^ st[12];
+    t      = st[12];
+    st[12] = t1_0 ^ t2_0 ^ t0_1 ^ st[15];
+    t_bis  = st[13];
+    st[13] = t1_1 ^ t2_1 ^ t0_2 ^ t;
+    t      = st[14];
+    st[14] = t1_2 ^ t2_2 ^ t0_3 ^ t_bis;
+    st[15] = t1_3 ^ t2_3 ^ t0_0 ^ t;
+    t1_0   = st[8] ^ st[9];
+    t1_1   = st[9] ^ st[10];
+    t1_2   = st[10] ^ st[11];
+    t1_3   = st[11] ^ st[8];
+    t      = st[8];
+    st[8]  = t0_0 ^ t1_1 ^ st[11];
+    t_bis  = st[9];
+    st[9]  = t0_1 ^ t1_2 ^ t;
+    t      = st[10];
+    st[10] = t0_2 ^ t1_3 ^ t_bis;
+    st[11] = t0_3 ^ t1_0 ^ t;
+    t0_0   = st[4] ^ st[5];
+    t0_1   = st[5] ^ st[6];
+    t0_2   = st[6] ^ st[7];
+    t0_3   = st[7] ^ st[4];
+    t      = st[4];
+    st[4]  = t1_0 ^ t0_1 ^ st[7];
+    t_bis  = st[5];
+    st[5]  = t1_1 ^ t0_2 ^ t;
+    t      = st[6];
+    st[6]  = t1_2 ^ t0_3 ^ t_bis;
+    st[7]  = t1_3 ^ t0_0 ^ t;
+    t      = st[0];
+    st[0]  = t0_0 ^ t2_1 ^ st[3];
+    t_bis  = st[1];
+    st[1]  = t0_1 ^ t2_2 ^ t;
+    t      = st[2];
+    st[2]  = t0_2 ^ t2_3 ^ t_bis;
+    st[3]  = t0_3 ^ t2_0 ^ t;
+}
 
-    return out;
+static void
+aes_round(AesBlocks st)
+{
+    sboxes(st);
+    shiftrows(st);
+    mixcolumns(st);
+}
+
+#    endif
+
+static void
+pack(AesBlocks st)
+{
+    size_t i;
+
+    for (i = 0; i < 32; i += 4) {
+        SWAPMOVE(st[i], st[i + 1], 0x00ff00ff, 8);
+        SWAPMOVE(st[i + 2], st[i + 3], 0x00ff00ff, 8);
+        SWAPMOVE(st[i], st[i + 2], 0x0000ffff, 16);
+        SWAPMOVE(st[i + 1], st[i + 3], 0x0000ffff, 16);
+    }
+    for (i = 0; i < 4; i++) {
+        SWAPMOVE(st[i + 4], st[i], 0x55555555, 1);
+        SWAPMOVE(st[i + 12], st[i + 8], 0x55555555, 1);
+        SWAPMOVE(st[i + 20], st[i + 16], 0x55555555, 1);
+        SWAPMOVE(st[i + 28], st[i + 24], 0x55555555, 1);
+        SWAPMOVE(st[i + 8], st[i], 0x33333333, 2);
+        SWAPMOVE(st[i + 12], st[i + 4], 0x33333333, 2);
+        SWAPMOVE(st[i + 24], st[i + 16], 0x33333333, 2);
+        SWAPMOVE(st[i + 28], st[i + 20], 0x33333333, 2);
+        SWAPMOVE(st[i + 16], st[i], 0x0f0f0f0f, 4);
+        SWAPMOVE(st[i + 20], st[i + 4], 0x0f0f0f0f, 4);
+        SWAPMOVE(st[i + 24], st[i + 8], 0x0f0f0f0f, 4);
+        SWAPMOVE(st[i + 28], st[i + 12], 0x0f0f0f0f, 4);
+    }
+}
+
+static void
+unpack(AesBlocks st)
+{
+    size_t i;
+
+    for (i = 0; i < 4; i++) {
+        SWAPMOVE(st[i + 4], st[i], 0x55555555, 1);
+        SWAPMOVE(st[i + 12], st[i + 8], 0x55555555, 1);
+        SWAPMOVE(st[i + 20], st[i + 16], 0x55555555, 1);
+        SWAPMOVE(st[i + 28], st[i + 24], 0x55555555, 1);
+        SWAPMOVE(st[i + 8], st[i], 0x33333333, 2);
+        SWAPMOVE(st[i + 12], st[i + 4], 0x33333333, 2);
+        SWAPMOVE(st[i + 24], st[i + 16], 0x33333333, 2);
+        SWAPMOVE(st[i + 28], st[i + 20], 0x33333333, 2);
+        SWAPMOVE(st[i + 16], st[i], 0x0f0f0f0f, 4);
+        SWAPMOVE(st[i + 20], st[i + 4], 0x0f0f0f0f, 4);
+        SWAPMOVE(st[i + 24], st[i + 8], 0x0f0f0f0f, 4);
+        SWAPMOVE(st[i + 28], st[i + 12], 0x0f0f0f0f, 4);
+    }
+    for (i = 0; i < 32; i += 4) {
+        SWAPMOVE(st[i], st[i + 2], 0x0000ffff, 16);
+        SWAPMOVE(st[i + 1], st[i + 3], 0x0000ffff, 16);
+        SWAPMOVE(st[i], st[i + 1], 0x00ff00ff, 8);
+        SWAPMOVE(st[i + 2], st[i + 3], 0x00ff00ff, 8);
+    }
+}
+
+static void
+softaes_blocks_encrypt(SoftAesBlock *out, const SoftAesBlock *in, const SoftAesBlock *rk,
+                       const size_t n)
+{
+    AesBlocks st;
+    size_t    i;
+
+    if (n < 8) {
+        memset(st, 0, sizeof st);
+    }
+    for (i = 0; i < n; i++) {
+        st[i * 4 + 0] = in[i].w0;
+        st[i * 4 + 1] = in[i].w1;
+        st[i * 4 + 2] = in[i].w2;
+        st[i * 4 + 3] = in[i].w3;
+    }
+    pack(st);
+    aes_round(st);
+    unpack(st);
+    for (i = 0; i < n; i++) {
+        out[i].w0 = st[i * 4 + 0] ^ rk[i].w0;
+        out[i].w1 = st[i * 4 + 1] ^ rk[i].w1;
+        out[i].w2 = st[i * 4 + 2] ^ rk[i].w2;
+        out[i].w3 = st[i * 4 + 3] ^ rk[i].w3;
+    }
+}
+
+void
+softaes_blocks_encrypt_x8(SoftAesBlock out[8], const SoftAesBlock in[8], const SoftAesBlock rk[8])
+{
+    softaes_blocks_encrypt(out, in, rk, 8);
+}
+
+void
+softaes_blocks_encrypt_x6(SoftAesBlock out[6], const SoftAesBlock in[6], const SoftAesBlock rk[6])
+{
+    softaes_blocks_encrypt(out, in, rk, 6);
 }
 #endif

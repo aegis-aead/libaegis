@@ -19,20 +19,19 @@ typedef SoftAesBlock aes_block_t;
 #    define AES_BLOCK_LOAD(A)         softaes_block_load(A)
 #    define AES_BLOCK_LOAD_64x2(A, B) softaes_block_load64x2((A), (B))
 #    define AES_BLOCK_STORE(A, B)     softaes_block_store((A), (B))
-#    define AES_ENC(A, B)             softaes_block_encrypt((A), (B))
 
 static inline void
 aegis256_update(aes_block_t *const state, const aes_block_t d)
 {
-    aes_block_t tmp;
+    aes_block_t in[6];
+    size_t      i;
 
-    tmp      = state[5];
-    state[5] = AES_ENC(state[4], state[5]);
-    state[4] = AES_ENC(state[3], state[4]);
-    state[3] = AES_ENC(state[2], state[3]);
-    state[2] = AES_ENC(state[1], state[2]);
-    state[1] = AES_ENC(state[0], state[1]);
-    state[0] = AES_BLOCK_XOR(AES_ENC(tmp, state[0]), d);
+    for (i = 0; i < 6; i++) {
+        in[i] = state[(i + 5) % 6];
+    }
+    softaes_blocks_encrypt_x6(state, in, state);
+
+    state[0] = AES_BLOCK_XOR(state[0], d);
 }
 
 #    include "aegis256_common.h"
