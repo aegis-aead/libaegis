@@ -250,8 +250,9 @@ softaes_blocks_encrypt_x6(SoftAesBlock out[6], const SoftAesBlock in[6], const S
 
 typedef CRYPTO_ALIGN(32) uint32_t AesBlocks[32];
 
-#    if (defined(__clang__) || defined(__GNUC__)) && defined(NATIVE_LITTLE_ENDIAN) && \
-        (defined(__SSE2__) || defined(__ARM_NEON) || defined(__ALTIVEC__)) &&         \
+#    if (defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 12)) &&      \
+        defined(NATIVE_LITTLE_ENDIAN) &&                                      \
+        (defined(__SSE2__) || defined(__ARM_NEON) || defined(__ALTIVEC__)) && \
         !defined(AEGIS_NO_VECTOR_SBOX)
 #        define SBOX_VECTORIZED
 #    endif
