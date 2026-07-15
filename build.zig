@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const with_benchmark: bool = b.option(bool, "with-benchmark", "Compile benchmark") orelse false;
     const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseFast });
-    const version = std.SemanticVersion.parse("0.10.1") catch unreachable;
+    const version = std.SemanticVersion.parse("0.10.2") catch unreachable;
     const linkage = b.option(std.builtin.LinkMode, "linkage", "Link mode") orelse .static;
 
     const lib = b.addLibrary(.{
