@@ -30,6 +30,15 @@ endif()
 
 target_sources("${PROJECT_NAME}" PRIVATE ${SOURCE_FILES})
 
+# Keep WebAssembly AES fast and constant-time by default.
+option(AEGIS_WASM_RELAXED_SIMD "Use relaxed SIMD on WebAssembly targets" ON)
+if(EMSCRIPTEN OR CMAKE_SYSTEM_PROCESSOR MATCHES "^wasm")
+  target_compile_options("${PROJECT_NAME}" PRIVATE -msimd128)
+  if(AEGIS_WASM_RELAXED_SIMD)
+    target_compile_options("${PROJECT_NAME}" PRIVATE -mrelaxed-simd)
+  endif()
+endif()
+
 target_include_directories("${PROJECT_NAME}"
                            PUBLIC $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>
                                   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)

@@ -1,8 +1,23 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const target = b.standardTargetOptions(.{});
+    var target = b.standardTargetOptions(.{});
     const with_benchmark: bool = b.option(bool, "with-benchmark", "Compile benchmark") orelse false;
+
+    // Keep WebAssembly AES fast and constant-time when no CPU is specified.
+    const wasm_relaxed = b.option(
+        bool,
+        "wasm-relaxed-simd",
+        "Use relaxed SIMD on WebAssembly targets (default: true)",
+    ) orelse true;
+    if (target.result.cpu.arch.isWasm() and target.query.cpu_model == .determined_by_arch_os) {
+        var query = target.query;
+        query.cpu_features_add.addFeature(@intFromEnum(std.Target.wasm.Feature.simd128));
+        if (wasm_relaxed) {
+            query.cpu_features_add.addFeature(@intFromEnum(std.Target.wasm.Feature.relaxed_simd));
+        }
+        target = b.resolveTargetQuery(query);
+    }
     const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseFast });
     const version = std.SemanticVersion.parse("0.10.2") catch unreachable;
     const linkage = b.option(std.builtin.LinkMode, "linkage", "Link mode") orelse .static;

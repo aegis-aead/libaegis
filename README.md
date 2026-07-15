@@ -49,7 +49,7 @@ zig build -Drelease -Dfavor-performance -Dwith-benchmark
 
 `libaegis` doesn't need WASI nor any extension to work on WebAssembly. The `wasm32-freestanding` target is fully supported.
 
-WebAssembly extensions such as `bulk_memory` and `simd128` can be enabled by adding `-Dcpu=baseline+bulk_memory+simd128` to the command line.
+On WebAssembly targets, the `simd128` and `relaxed_simd` extensions are enabled by default: they make the AES round both constant-time and considerably faster on runtimes such as V8 (node) and wasmtime. For engines without relaxed SIMD, build with `-Dwasm-relaxed-simd=false` (or `-DAEGIS_WASM_RELAXED_SIMD=OFF` with cmake); a custom `-Dcpu=` option always takes precedence.
 
 ### Compilation with `cmake`
 

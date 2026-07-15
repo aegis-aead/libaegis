@@ -1,6 +1,10 @@
 #define RATE      32
 #define ALIGNMENT 32
 
+#ifndef AES_BLOCK_ENC_BARRIER
+#    define AES_BLOCK_ENC_BARRIER() (void) 0
+#endif
+
 typedef aes_block_t aegis_blocks[8];
 
 static inline void
@@ -114,6 +118,7 @@ aegis128l_enc(uint8_t *const dst, const uint8_t *const src, aes_block_t *const s
     tmp1 = AES_BLOCK_XOR(tmp1, AES_BLOCK_AND(state[6], state[7]));
     AES_BLOCK_STORE(dst, tmp0);
     AES_BLOCK_STORE(dst + AES_BLOCK_LENGTH, tmp1);
+    AES_BLOCK_ENC_BARRIER();
 
     aegis128l_update(state, msg0, msg1);
 }

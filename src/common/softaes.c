@@ -4,11 +4,50 @@
 #include "common.h"
 #include "softaes.h"
 
-#if defined(__wasm__) && !defined(FAVOR_PERFORMANCE)
-#    define FAVOR_PERFORMANCE
-#endif
+#ifdef SOFTAES_SIMD128
 
-#ifdef FAVOR_PERFORMANCE
+/* Keep these tables mutable and visible so LLVM preserves the faster loads. */
+CRYPTO_ALIGN(64)
+uint8_t libaegis_softaes_simd_tables[SOFTAES_TBL_COUNT][16] = {
+    [SOFTAES_TBL_IPT_LO] = { 0x00, 0x70, 0x2a, 0x5a, 0x98, 0xe8, 0xb2, 0xc2, 0x08, 0x78, 0x22, 0x52,
+                             0x90, 0xe0, 0xba, 0xca },
+    [SOFTAES_TBL_IPT_HI] = { 0x00, 0x4d, 0x7c, 0x31, 0x7d, 0x30, 0x01, 0x4c, 0x81, 0xcc, 0xfd, 0xb0,
+                             0xfc, 0xb1, 0x80, 0xcd },
+    [SOFTAES_TBL_INV]    = { 0x80, 0x01, 0x08, 0x0d, 0x0f, 0x06, 0x05, 0x0e, 0x02, 0x0c, 0x0b, 0x0a,
+                             0x09, 0x03, 0x07, 0x04 },
+    [SOFTAES_TBL_INVA]   = { 0x80, 0x07, 0x0b, 0x0f, 0x06, 0x0a, 0x04, 0x01, 0x09, 0x08, 0x05, 0x02,
+                             0x0c, 0x0e, 0x0d, 0x03 },
+    [SOFTAES_TBL_SBO_U]  = { 0x00, 0xc7, 0xbd, 0x6f, 0x17, 0x6d, 0xd2, 0xd0, 0x78, 0xa8, 0x02, 0xc5,
+                             0x7a, 0xbf, 0xaa, 0x15 },
+    [SOFTAES_TBL_SBO_T]  = { 0x00, 0x6a, 0xbb, 0x5f, 0xa5, 0x74, 0xe4, 0xcf, 0xfa, 0x35, 0x2b, 0x41,
+                             0xd1, 0x90, 0x1e, 0x8e },
+    /* Precompute doubled S-box outputs for MixColumns. */
+    [SOFTAES_TBL_SBO2_U] = { 0x00, 0x95, 0x61, 0xde, 0x2e, 0xda, 0xbf, 0xbb, 0xf0, 0x4b, 0x04, 0x91,
+                             0xf4, 0x65, 0x4f, 0x2a },
+    [SOFTAES_TBL_SBO2_T] = { 0x00, 0xd4, 0x6d, 0xbe, 0x51, 0xe8, 0xd3, 0x85, 0xef, 0x6a, 0x56, 0x82,
+                             0xb9, 0x3b, 0x3c, 0x07 },
+    /* Combine ShiftRows with each MixColumns rotation. */
+    [SOFTAES_TBL_MC0] = { 0x00, 0x05, 0x0a, 0x0f, 0x04, 0x09, 0x0e, 0x03, 0x08, 0x0d, 0x02, 0x07,
+                          0x0c, 0x01, 0x06, 0x0b },
+    [SOFTAES_TBL_MC1] = { 0x05, 0x0a, 0x0f, 0x00, 0x09, 0x0e, 0x03, 0x04, 0x0d, 0x02, 0x07, 0x08,
+                          0x01, 0x06, 0x0b, 0x0c },
+    [SOFTAES_TBL_MC2] = { 0x0a, 0x0f, 0x00, 0x05, 0x0e, 0x03, 0x04, 0x09, 0x02, 0x07, 0x08, 0x0d,
+                          0x06, 0x0b, 0x0c, 0x01 },
+    [SOFTAES_TBL_MC3] = { 0x0f, 0x00, 0x05, 0x0a, 0x03, 0x04, 0x09, 0x0e, 0x07, 0x08, 0x0d, 0x02,
+                          0x0b, 0x0c, 0x01, 0x06 },
+    [SOFTAES_TBL_S0F] = { 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f, 0x0f,
+                          0x0f, 0x0f, 0x0f, 0x0f },
+    [SOFTAES_TBL_C63] = { 0x63, 0x63, 0x63, 0x63, 0x63, 0x63, 0x63, 0x63, 0x63, 0x63, 0x63, 0x63,
+                          0x63, 0x63, 0x63, 0x63 },
+};
+
+#else
+
+#    if defined(__wasm__) && !defined(FAVOR_PERFORMANCE)
+#        define FAVOR_PERFORMANCE
+#    endif
+
+#    ifdef FAVOR_PERFORMANCE
 static const uint32_t _aes_lut[1024] = {
     0xa56363c6, 0x847c7cf8, 0x997777ee, 0x8d7b7bf6, 0x0df2f2ff, 0xbd6b6bd6, 0xb16f6fde, 0x54c5c591,
     0x50303060, 0x03010102, 0xa96767ce, 0x7d2b2b56, 0x19fefee7, 0x62d7d7b5, 0xe6abab4d, 0x9a7676ec,
@@ -222,7 +261,7 @@ softaes_blocks_encrypt_x6(SoftAesBlock out[6], const SoftAesBlock in[6], const S
         out[i] = softaes_block_encrypt(in[i], rk[i]);
     }
 }
-#else
+#    else
 
 /*
  * Without FAVOR_PERFORMANCE, the AES rounds of a whole AEGIS state update are
@@ -241,29 +280,29 @@ softaes_blocks_encrypt_x6(SoftAesBlock out[6], const SoftAesBlock in[6], const S
  * 4x32-bit vectors instead of relying on autovectorization.
  */
 
-#    define SWAPMOVE(a, b, mask, n)                     \
-        do {                                            \
-            const uint32_t tmp = (b ^ (a >> n)) & mask; \
-            b ^= tmp;                                   \
-            a ^= (tmp << n);                            \
-        } while (0)
+#        define SWAPMOVE(a, b, mask, n)                     \
+            do {                                            \
+                const uint32_t tmp = (b ^ (a >> n)) & mask; \
+                b ^= tmp;                                   \
+                a ^= (tmp << n);                            \
+            } while (0)
 
 typedef CRYPTO_ALIGN(32) uint32_t AesBlocks[32];
 
-#    if (defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 12)) &&      \
-        defined(NATIVE_LITTLE_ENDIAN) &&                                      \
-        (defined(__SSE2__) || defined(__ARM_NEON) || defined(__ALTIVEC__)) && \
-        !defined(AEGIS_NO_VECTOR_SBOX)
-#        define SBOX_VECTORIZED
-#    endif
+#        if (defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 12)) &&      \
+            defined(NATIVE_LITTLE_ENDIAN) &&                                      \
+            (defined(__SSE2__) || defined(__ARM_NEON) || defined(__ALTIVEC__)) && \
+            !defined(AEGIS_NO_VECTOR_SBOX)
+#            define SBOX_VECTORIZED
+#        endif
 
-#    ifdef SBOX_VECTORIZED
+#        ifdef SBOX_VECTORIZED
 
 typedef uint32_t Vec __attribute__((vector_size(16)));
 typedef uint8_t  VecBytes __attribute__((vector_size(16)));
 
-#        define LANEROT1(V) __builtin_shufflevector((V), (V), 1, 2, 3, 0)
-#        define LANEROT2(V) __builtin_shufflevector((V), (V), 2, 3, 0, 1)
+#            define LANEROT1(V) __builtin_shufflevector((V), (V), 1, 2, 3, 0)
+#            define LANEROT2(V) __builtin_shufflevector((V), (V), 2, 3, 0, 1)
 
 static inline void
 sbox_vec(Vec u[8])
@@ -449,7 +488,7 @@ aes_round(AesBlocks st)
     memcpy(st, u, sizeof(AesBlocks));
 }
 
-#    else
+#        else
 
 /* The scalar fallback uses the same permuted layout as the vectorized code. The sbox is
  * evaluated one group at a time to keep register pressure low on 32-bit CPUs, but shiftrows
@@ -693,7 +732,7 @@ aes_round(AesBlocks st)
     mixcolumns(st);
 }
 
-#    endif
+#        endif
 
 static void
 pack(AesBlocks st)
@@ -787,10 +826,10 @@ softaes_blocks_encrypt_x6(SoftAesBlock out[6], const SoftAesBlock in[6], const S
 {
     softaes_blocks_encrypt(out, in, rk, 6);
 }
-#endif
+#    endif
 
-#if defined(FAVOR_PERFORMANCE) && (defined(__GNUC__) || defined(__clang__)) && \
-    defined(NATIVE_LITTLE_ENDIAN)
+#    if defined(FAVOR_PERFORMANCE) && (defined(__GNUC__) || defined(__clang__)) && \
+        defined(NATIVE_LITTLE_ENDIAN)
 
 /*
  * Every output column is stored at once and followed by a memory barrier,
@@ -811,8 +850,8 @@ softaes_round_mem(const uint8_t *x, uint32_t *dst)
     __asm__ __volatile__("" ::: "memory");
 }
 
-#    define SOFTAES_ROT(SRC, DST) \
-        softaes_round_mem((const uint8_t *) (w + 4 * (SRC)), w + 4 * (DST))
+#        define SOFTAES_ROT(SRC, DST) \
+            softaes_round_mem((const uint8_t *) (w + 4 * (SRC)), w + 4 * (DST))
 
 void
 softaes_aegis_rotate8_x1(SoftAesBlock st[8])
@@ -984,7 +1023,7 @@ softaes_aegis_rotate6_x4(SoftAesBlock st[24])
     softaes_round_mem(tp + 48, w + 12);
 }
 
-#else
+#    else
 
 static void
 softaes_aegis_rotate(SoftAesBlock *st, const size_t blocks, const size_t lanes)
@@ -1055,4 +1094,6 @@ softaes_aegis_rotate6_x4(SoftAesBlock st[24])
     softaes_aegis_rotate(st, 6, 4);
 }
 
-#endif
+#    endif
+
+#endif /* SOFTAES_SIMD128 */
