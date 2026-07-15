@@ -788,3 +788,271 @@ softaes_blocks_encrypt_x6(SoftAesBlock out[6], const SoftAesBlock in[6], const S
     softaes_blocks_encrypt(out, in, rk, 6);
 }
 #endif
+
+#if defined(FAVOR_PERFORMANCE) && (defined(__GNUC__) || defined(__clang__)) && \
+    defined(NATIVE_LITTLE_ENDIAN)
+
+/*
+ * Every output column is stored at once and followed by a memory barrier,
+ * or the compiler hoists all sixteen table loads of a round above their
+ * XOR consumers and register-poor targets (wasmtime) spill the lot.
+ */
+
+static inline void
+softaes_round_mem(const uint8_t *x, uint32_t *dst)
+{
+    dst[0] ^= LUT0[x[0]] ^ LUT1[x[5]] ^ LUT2[x[10]] ^ LUT3[x[15]];
+    __asm__ __volatile__("" ::: "memory");
+    dst[1] ^= LUT0[x[4]] ^ LUT1[x[9]] ^ LUT2[x[14]] ^ LUT3[x[3]];
+    __asm__ __volatile__("" ::: "memory");
+    dst[2] ^= LUT0[x[8]] ^ LUT1[x[13]] ^ LUT2[x[2]] ^ LUT3[x[7]];
+    __asm__ __volatile__("" ::: "memory");
+    dst[3] ^= LUT0[x[12]] ^ LUT1[x[1]] ^ LUT2[x[6]] ^ LUT3[x[11]];
+    __asm__ __volatile__("" ::: "memory");
+}
+
+#    define SOFTAES_ROT(SRC, DST) \
+        softaes_round_mem((const uint8_t *) (w + 4 * (SRC)), w + 4 * (DST))
+
+void
+softaes_aegis_rotate8_x1(SoftAesBlock st[8])
+{
+    uint32_t      *w = (uint32_t *) (void *) st;
+    uint32_t       tmp[4];
+    const uint8_t *tp = (const uint8_t *) tmp;
+
+    COMPILER_ASSERT(sizeof(SoftAesBlock) == 16);
+    memcpy(tmp, w + 4 * 7, 16);
+    __asm__("" : "+r"(tp));
+    SOFTAES_ROT(6, 7);
+    SOFTAES_ROT(5, 6);
+    SOFTAES_ROT(4, 5);
+    SOFTAES_ROT(3, 4);
+    SOFTAES_ROT(2, 3);
+    SOFTAES_ROT(1, 2);
+    SOFTAES_ROT(0, 1);
+    softaes_round_mem(tp, w);
+}
+
+void
+softaes_aegis_rotate8_x2(SoftAesBlock st[16])
+{
+    uint32_t      *w = (uint32_t *) (void *) st;
+    uint32_t       tmp[8];
+    const uint8_t *tp = (const uint8_t *) tmp;
+
+    COMPILER_ASSERT(sizeof(SoftAesBlock) == 16);
+    memcpy(tmp, w + 4 * 14, 32);
+    __asm__("" : "+r"(tp));
+    SOFTAES_ROT(13, 15);
+    SOFTAES_ROT(12, 14);
+    SOFTAES_ROT(11, 13);
+    SOFTAES_ROT(10, 12);
+    SOFTAES_ROT(9, 11);
+    SOFTAES_ROT(8, 10);
+    SOFTAES_ROT(7, 9);
+    SOFTAES_ROT(6, 8);
+    SOFTAES_ROT(5, 7);
+    SOFTAES_ROT(4, 6);
+    SOFTAES_ROT(3, 5);
+    SOFTAES_ROT(2, 4);
+    SOFTAES_ROT(1, 3);
+    SOFTAES_ROT(0, 2);
+    softaes_round_mem(tp, w);
+    softaes_round_mem(tp + 16, w + 4);
+}
+
+void
+softaes_aegis_rotate8_x4(SoftAesBlock st[32])
+{
+    uint32_t      *w = (uint32_t *) (void *) st;
+    uint32_t       tmp[16];
+    const uint8_t *tp = (const uint8_t *) tmp;
+
+    COMPILER_ASSERT(sizeof(SoftAesBlock) == 16);
+    memcpy(tmp, w + 4 * 28, 64);
+    __asm__("" : "+r"(tp));
+    SOFTAES_ROT(27, 31);
+    SOFTAES_ROT(26, 30);
+    SOFTAES_ROT(25, 29);
+    SOFTAES_ROT(24, 28);
+    SOFTAES_ROT(23, 27);
+    SOFTAES_ROT(22, 26);
+    SOFTAES_ROT(21, 25);
+    SOFTAES_ROT(20, 24);
+    SOFTAES_ROT(19, 23);
+    SOFTAES_ROT(18, 22);
+    SOFTAES_ROT(17, 21);
+    SOFTAES_ROT(16, 20);
+    SOFTAES_ROT(15, 19);
+    SOFTAES_ROT(14, 18);
+    SOFTAES_ROT(13, 17);
+    SOFTAES_ROT(12, 16);
+    SOFTAES_ROT(11, 15);
+    SOFTAES_ROT(10, 14);
+    SOFTAES_ROT(9, 13);
+    SOFTAES_ROT(8, 12);
+    SOFTAES_ROT(7, 11);
+    SOFTAES_ROT(6, 10);
+    SOFTAES_ROT(5, 9);
+    SOFTAES_ROT(4, 8);
+    SOFTAES_ROT(3, 7);
+    SOFTAES_ROT(2, 6);
+    SOFTAES_ROT(1, 5);
+    SOFTAES_ROT(0, 4);
+    softaes_round_mem(tp, w);
+    softaes_round_mem(tp + 16, w + 4);
+    softaes_round_mem(tp + 32, w + 8);
+    softaes_round_mem(tp + 48, w + 12);
+}
+
+void
+softaes_aegis_rotate6_x1(SoftAesBlock st[6])
+{
+    uint32_t      *w = (uint32_t *) (void *) st;
+    uint32_t       tmp[4];
+    const uint8_t *tp = (const uint8_t *) tmp;
+
+    COMPILER_ASSERT(sizeof(SoftAesBlock) == 16);
+    memcpy(tmp, w + 4 * 5, 16);
+    __asm__("" : "+r"(tp));
+    SOFTAES_ROT(4, 5);
+    SOFTAES_ROT(3, 4);
+    SOFTAES_ROT(2, 3);
+    SOFTAES_ROT(1, 2);
+    SOFTAES_ROT(0, 1);
+    softaes_round_mem(tp, w);
+}
+
+void
+softaes_aegis_rotate6_x2(SoftAesBlock st[12])
+{
+    uint32_t      *w = (uint32_t *) (void *) st;
+    uint32_t       tmp[8];
+    const uint8_t *tp = (const uint8_t *) tmp;
+
+    COMPILER_ASSERT(sizeof(SoftAesBlock) == 16);
+    memcpy(tmp, w + 4 * 10, 32);
+    __asm__("" : "+r"(tp));
+    SOFTAES_ROT(9, 11);
+    SOFTAES_ROT(8, 10);
+    SOFTAES_ROT(7, 9);
+    SOFTAES_ROT(6, 8);
+    SOFTAES_ROT(5, 7);
+    SOFTAES_ROT(4, 6);
+    SOFTAES_ROT(3, 5);
+    SOFTAES_ROT(2, 4);
+    SOFTAES_ROT(1, 3);
+    SOFTAES_ROT(0, 2);
+    softaes_round_mem(tp, w);
+    softaes_round_mem(tp + 16, w + 4);
+}
+
+void
+softaes_aegis_rotate6_x4(SoftAesBlock st[24])
+{
+    uint32_t      *w = (uint32_t *) (void *) st;
+    uint32_t       tmp[16];
+    const uint8_t *tp = (const uint8_t *) tmp;
+
+    COMPILER_ASSERT(sizeof(SoftAesBlock) == 16);
+    memcpy(tmp, w + 4 * 20, 64);
+    __asm__("" : "+r"(tp));
+    SOFTAES_ROT(19, 23);
+    SOFTAES_ROT(18, 22);
+    SOFTAES_ROT(17, 21);
+    SOFTAES_ROT(16, 20);
+    SOFTAES_ROT(15, 19);
+    SOFTAES_ROT(14, 18);
+    SOFTAES_ROT(13, 17);
+    SOFTAES_ROT(12, 16);
+    SOFTAES_ROT(11, 15);
+    SOFTAES_ROT(10, 14);
+    SOFTAES_ROT(9, 13);
+    SOFTAES_ROT(8, 12);
+    SOFTAES_ROT(7, 11);
+    SOFTAES_ROT(6, 10);
+    SOFTAES_ROT(5, 9);
+    SOFTAES_ROT(4, 8);
+    SOFTAES_ROT(3, 7);
+    SOFTAES_ROT(2, 6);
+    SOFTAES_ROT(1, 5);
+    SOFTAES_ROT(0, 4);
+    softaes_round_mem(tp, w);
+    softaes_round_mem(tp + 16, w + 4);
+    softaes_round_mem(tp + 32, w + 8);
+    softaes_round_mem(tp + 48, w + 12);
+}
+
+#else
+
+static void
+softaes_aegis_rotate(SoftAesBlock *st, const size_t blocks, const size_t lanes)
+{
+    SoftAesBlock in[8], rk[8], out[8];
+    size_t       b, l;
+
+    if (lanes == 1) {
+        for (b = 0; b < blocks; b++) {
+            in[b] = st[(b + blocks - 1) % blocks];
+        }
+        if (blocks == 8) {
+            softaes_blocks_encrypt_x8(st, in, st);
+        } else {
+            softaes_blocks_encrypt_x6(st, in, st);
+        }
+        return;
+    }
+    for (l = 0; l < lanes; l++) {
+        for (b = 0; b < blocks; b++) {
+            in[b] = st[((b + blocks - 1) % blocks) * lanes + l];
+            rk[b] = st[b * lanes + l];
+        }
+        if (blocks == 8) {
+            softaes_blocks_encrypt_x8(out, in, rk);
+        } else {
+            softaes_blocks_encrypt_x6(out, in, rk);
+        }
+        for (b = 0; b < blocks; b++) {
+            st[b * lanes + l] = out[b];
+        }
+    }
+}
+
+void
+softaes_aegis_rotate8_x1(SoftAesBlock st[8])
+{
+    softaes_aegis_rotate(st, 8, 1);
+}
+
+void
+softaes_aegis_rotate8_x2(SoftAesBlock st[16])
+{
+    softaes_aegis_rotate(st, 8, 2);
+}
+
+void
+softaes_aegis_rotate8_x4(SoftAesBlock st[32])
+{
+    softaes_aegis_rotate(st, 8, 4);
+}
+
+void
+softaes_aegis_rotate6_x1(SoftAesBlock st[6])
+{
+    softaes_aegis_rotate(st, 6, 1);
+}
+
+void
+softaes_aegis_rotate6_x2(SoftAesBlock st[12])
+{
+    softaes_aegis_rotate(st, 6, 2);
+}
+
+void
+softaes_aegis_rotate6_x4(SoftAesBlock st[24])
+{
+    softaes_aegis_rotate(st, 6, 4);
+}
+
+#endif

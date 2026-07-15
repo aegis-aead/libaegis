@@ -23,13 +23,7 @@ typedef SoftAesBlock aes_block_t;
 static inline void
 aegis256_update(aes_block_t *const state, const aes_block_t d)
 {
-    aes_block_t in[6];
-    size_t      i;
-
-    for (i = 0; i < 6; i++) {
-        in[i] = state[(i + 5) % 6];
-    }
-    softaes_blocks_encrypt_x6(state, in, state);
+    softaes_aegis_rotate6_x1(state);
 
     state[0] = AES_BLOCK_XOR(state[0], d);
 }

@@ -8,6 +8,12 @@
 /* Namespacing to avoid conflicts with libsodium */
 #define softaes_blocks_encrypt_x8 libaegis_softaes_blocks_encrypt_x8
 #define softaes_blocks_encrypt_x6 libaegis_softaes_blocks_encrypt_x6
+#define softaes_aegis_rotate8_x1  libaegis_softaes_aegis_rotate8_x1
+#define softaes_aegis_rotate8_x2  libaegis_softaes_aegis_rotate8_x2
+#define softaes_aegis_rotate8_x4  libaegis_softaes_aegis_rotate8_x4
+#define softaes_aegis_rotate6_x1  libaegis_softaes_aegis_rotate6_x1
+#define softaes_aegis_rotate6_x2  libaegis_softaes_aegis_rotate6_x2
+#define softaes_aegis_rotate6_x4  libaegis_softaes_aegis_rotate6_x4
 
 typedef struct SoftAesBlock {
     uint32_t w0;
@@ -23,6 +29,17 @@ void softaes_blocks_encrypt_x8(SoftAesBlock out[8], const SoftAesBlock in[8],
 
 void softaes_blocks_encrypt_x6(SoftAesBlock out[6], const SoftAesBlock in[6],
                                const SoftAesBlock rk[6]);
+
+/*
+ * In-place AEGIS state rotation: with the state as 8 (or 6) blocks of `lanes`
+ * 16-byte pieces, replaces each block with AESRound(previous block) ^ block.
+ */
+void softaes_aegis_rotate8_x1(SoftAesBlock st[8]);
+void softaes_aegis_rotate8_x2(SoftAesBlock st[16]);
+void softaes_aegis_rotate8_x4(SoftAesBlock st[32]);
+void softaes_aegis_rotate6_x1(SoftAesBlock st[6]);
+void softaes_aegis_rotate6_x2(SoftAesBlock st[12]);
+void softaes_aegis_rotate6_x4(SoftAesBlock st[24]);
 
 static inline SoftAesBlock
 softaes_block_load(const uint8_t in[16])

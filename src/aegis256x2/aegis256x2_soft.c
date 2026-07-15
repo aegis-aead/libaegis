@@ -51,24 +51,8 @@ AES_BLOCK_STORE(uint8_t *a, const aes_block_t b)
 static inline void
 aegis256x2_update(aes_block_t *const state, const aes_block_t d)
 {
-    SoftAesBlock in[6], rk[6], out[6];
-    size_t       i;
-
-#    define AEGIS_UPDATE_LANE(FIELD)                \
-        do {                                        \
-            for (i = 0; i < 6; i++) {               \
-                in[i] = state[(i + 5) % 6].FIELD;   \
-                rk[i] = state[i].FIELD;             \
-            }                                       \
-            softaes_blocks_encrypt_x6(out, in, rk); \
-            for (i = 0; i < 6; i++) {               \
-                state[i].FIELD = out[i];            \
-            }                                       \
-        } while (0)
-
-    AEGIS_UPDATE_LANE(b0);
-    AEGIS_UPDATE_LANE(b1);
-#    undef AEGIS_UPDATE_LANE
+    COMPILER_ASSERT(sizeof(aes_block_t) == 2 * sizeof(SoftAesBlock));
+    softaes_aegis_rotate6_x2((SoftAesBlock *) (void *) state);
 
     state[0] = AES_BLOCK_XOR(state[0], d);
 }
