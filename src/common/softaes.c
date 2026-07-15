@@ -140,10 +140,10 @@ static const uint32_t _aes_lut[1024] = {
     0x82c34141, 0x29b09999, 0x5a772d2d, 0x1e110f0f, 0x7bcbb0b0, 0xa8fc5454, 0x6dd6bbbb, 0x2c3a1616
 };
 
-static const uint32_t* const LUT0 = _aes_lut + 0 * 256;
-static const uint32_t* const LUT1 = _aes_lut + 1 * 256;
-static const uint32_t* const LUT2 = _aes_lut + 2 * 256;
-static const uint32_t* const LUT3 = _aes_lut + 3 * 256;
+static const uint32_t *const LUT0 = _aes_lut + 0 * 256;
+static const uint32_t *const LUT1 = _aes_lut + 1 * 256;
+static const uint32_t *const LUT2 = _aes_lut + 2 * 256;
+static const uint32_t *const LUT3 = _aes_lut + 3 * 256;
 
 static SoftAesBlock
 softaes_block_encrypt(const SoftAesBlock block, const SoftAesBlock rk)
