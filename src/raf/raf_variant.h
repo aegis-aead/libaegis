@@ -258,7 +258,7 @@ static void
 zeroize_scratch_buffers(aegis_raf_ctx_internal *ctx)
 {
     if (ctx->scratch_buf != NULL && ctx->scratch_len > 0) {
-        memset(ctx->scratch_buf, 0, ctx->scratch_len);
+        aegis_secure_zero(ctx->scratch_buf, ctx->scratch_len);
     }
     ctx->scratch_buf     = NULL;
     ctx->scratch_len     = 0;

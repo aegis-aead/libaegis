@@ -159,6 +159,20 @@ rotl32(const uint32_t x, const int b)
 
 #define COMPILER_ASSERT(X) (void) sizeof(char[(X) ? 1 : -1])
 
+/*
+ * Overwrite a buffer that held secret material.
+ *
+ * Unlike memset(), this is not removable by dead-store elimination when the buffer is not read
+ * again before the end of its lifetime.
+ *
+ * Use it only on buffers that are already in memory: caller-owned state objects, and locals whose
+ * address escapes to an out-of-line call anyway. Applying it to a local that the compiler
+ * currently keeps in registers -- the `aegis_blocks` scratch arrays in particular -- forces the
+ * array into memory for the whole function. That defeats SROA in the hot loop and materializes
+ * the very stack copy the call was meant to erase.
+ */
+void aegis_secure_zero(void *buf, size_t len);
+
 #ifndef ERANGE
 #    define ERANGE 34
 #endif

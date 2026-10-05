@@ -190,18 +190,26 @@ int
 aegis128x2_mac_verify(aegis128x2_mac_state *st_, const uint8_t *mac, size_t maclen)
 {
     uint8_t expected_mac[32];
+    int     ret;
 
     switch (maclen) {
     case 16:
         implementation->state_mac_final(st_, expected_mac, maclen);
-        return aegis_verify_16(expected_mac, mac);
+        ret = aegis_verify_16(expected_mac, mac);
+        break;
     case 32:
         implementation->state_mac_final(st_, expected_mac, maclen);
-        return aegis_verify_32(expected_mac, mac);
+        ret = aegis_verify_32(expected_mac, mac);
+        break;
     default:
         errno = EINVAL;
         return -1;
     }
+    // Both the match and the mismatch path reach this point; the mismatch path is the one an
+    // attacker can drive repeatedly.
+    aegis_secure_zero(expected_mac, sizeof expected_mac);
+
+    return ret;
 }
 
 void

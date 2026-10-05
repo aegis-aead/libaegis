@@ -4,9 +4,38 @@
 #include "common.h"
 #include "cpu.h"
 
+#ifndef HAVE_EXPLICIT_BZERO
+#    if defined(__OpenBSD__) || defined(__FreeBSD__)
+#        define HAVE_EXPLICIT_BZERO 1
+#    elif defined(__GLIBC__) && defined(__GLIBC_PREREQ) && defined(__USE_MISC)
+#        if __GLIBC_PREREQ(2, 25)
+#            define HAVE_EXPLICIT_BZERO 1
+#        endif
+#    endif
+#endif
+
 #if !defined(__GNUC__) && !defined(__clang__)
 static volatile uint16_t optblocker_u16;
 #endif
+
+void
+aegis_secure_zero(void *buf, size_t len)
+{
+#if defined(HAVE_EXPLICIT_BZERO)
+    explicit_bzero(buf, len);
+#elif defined(__GNUC__) || defined(__clang__)
+    memset(buf, 0, len);
+    /* Prevent the store above from being elided as dead. */
+    __asm__ __volatile__("" : : "r"(buf) : "memory");
+#else
+    volatile unsigned char *p = (volatile unsigned char *) buf;
+    size_t                  i;
+
+    for (i = 0; i < len; i++) {
+        p[i] = 0;
+    }
+#endif
+}
 
 #if defined(__GNUC__) || defined(__clang__)
 typedef uint64_t aegis_unaligned_u64 __attribute__((aligned(1), may_alias));
