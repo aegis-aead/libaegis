@@ -8,15 +8,9 @@
 static volatile uint16_t optblocker_u16;
 #endif
 
-#if defined(__GNUC__) || defined(__clang__)
-typedef uint64_t aegis_unaligned_u64 __attribute__((aligned(1), may_alias));
-#endif
-
 static inline int
-aegis_verify_n(const uint8_t *x_, const uint8_t *y_, const int n)
+aegis_verify_n(const uint8_t *x, const uint8_t *y, const int n)
 {
-    const volatile uint8_t *volatile x = (const volatile uint8_t *volatile) x_;
-    const volatile uint8_t *volatile y = (const volatile uint8_t *volatile) y_;
 #if !defined(__GNUC__) && !defined(__clang__)
     volatile uint16_t d;
 #endif
@@ -25,24 +19,24 @@ aegis_verify_n(const uint8_t *x_, const uint8_t *y_, const int n)
 
 #if defined(__GNUC__) || defined(__clang__)
     {
-        const volatile aegis_unaligned_u64 *volatile x64 =
-            (const volatile aegis_unaligned_u64 *volatile) (const void *) x_;
-        const volatile aegis_unaligned_u64 *volatile y64 =
-            (const volatile aegis_unaligned_u64 *volatile) (const void *) y_;
         uint64_t acc64 = 0U;
+        uint64_t x64, y64;
 
-        for (; i + 8 <= n; i += 8) {
-            acc64 |= x64[i / 8] ^ y64[i / 8];
+        for (i = 0; i < n; i += 8) {
+            memcpy(&x64, x + i, sizeof x64);
+            memcpy(&y64, y + i, sizeof y64);
+            acc64 |= x64 ^ y64;
         }
         acc64 |= acc64 >> 32;
         acc64 |= acc64 >> 16;
         acc64 |= acc64 >> 8;
         acc = (uint16_t) (acc64 & 0xff);
     }
-#endif
+#else
     for (; i < n; i++) {
         acc |= x[i] ^ y[i];
     }
+#endif
 #if defined(__GNUC__) || defined(__clang__)
     __asm__("" : "+r"(acc) :);
     acc--;
