@@ -262,6 +262,7 @@ struct aegis128x4_implementation aegis128x4_neon_aes_implementation = {
     .state_mac_final         = state_mac_final,
     .state_mac_reset         = state_mac_reset,
     .state_mac_clone         = state_mac_clone,
+    .state_mac_verify        = state_mac_verify,
 };
 
 #    ifdef __clang__

@@ -50,7 +50,7 @@ aegis256_init(const uint8_t *key, const uint8_t *nonce, aes_block_t *const state
 }
 
 static inline void
-aegis256_mac(uint8_t *mac, size_t maclen, uint64_t adlen, uint64_t mlen, aes_block_t *const state)
+aegis256_mac_finalize(uint64_t adlen, uint64_t mlen, aes_block_t *const state)
 {
     aes_block_t tmp;
     int         i;
@@ -61,6 +61,12 @@ aegis256_mac(uint8_t *mac, size_t maclen, uint64_t adlen, uint64_t mlen, aes_blo
     for (i = 0; i < 7; i++) {
         aegis256_update(state, tmp);
     }
+}
+
+static inline void
+aegis256_mac_tag(uint8_t *mac, size_t maclen, const aes_block_t *state)
+{
+    aes_block_t tmp;
 
     if (maclen == 16) {
         tmp = AES_BLOCK_XOR(state[5], state[4]);
@@ -75,6 +81,13 @@ aegis256_mac(uint8_t *mac, size_t maclen, uint64_t adlen, uint64_t mlen, aes_blo
     } else {
         memset(mac, 0, maclen);
     }
+}
+
+static inline void
+aegis256_mac(uint8_t *mac, size_t maclen, uint64_t adlen, uint64_t mlen, aes_block_t *const state)
+{
+    aegis256_mac_finalize(adlen, mlen, state);
+    aegis256_mac_tag(mac, maclen, state);
 }
 
 static inline void
@@ -704,6 +717,35 @@ state_mac_final(aegis256_mac_state *st_, uint8_t *mac, size_t maclen)
     memcpy(st->blocks, blocks, sizeof blocks);
 
     return 0;
+}
+
+static int
+state_mac_verify(aegis256_mac_state *st_, const uint8_t *mac, size_t maclen)
+{
+    uint8_t                    expected_mac[32];
+    aegis_blocks               blocks;
+    _aegis256_mac_state *const st =
+        (_aegis256_mac_state *) ((((uintptr_t) &st_->opaque) + (ALIGNMENT - 1)) &
+                                 ~(uintptr_t) (ALIGNMENT - 1));
+    size_t left;
+
+    memcpy(blocks, st->blocks, sizeof blocks);
+
+    left = st->adlen % RATE;
+    if (left != 0) {
+        memset(st->buf + left, 0, RATE - left);
+        aegis256_absorb(st->buf, blocks);
+    }
+    aegis256_mac_finalize(st->adlen, maclen, blocks);
+
+    memcpy(st->blocks, blocks, sizeof blocks);
+
+    if (maclen == 16) {
+        aegis256_mac_tag(expected_mac, 16, blocks);
+        return aegis_tag_compare(expected_mac, mac, 16);
+    }
+    aegis256_mac_tag(expected_mac, 32, blocks);
+    return aegis_tag_compare(expected_mac, mac, 32);
 }
 
 static void

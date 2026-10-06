@@ -189,6 +189,13 @@ aegis256x2_mac_final(aegis256x2_mac_state *st_, uint8_t *mac, size_t maclen)
 int
 aegis256x2_mac_verify(aegis256x2_mac_state *st_, const uint8_t *mac, size_t maclen)
 {
+#if defined(__GNUC__) || defined(__clang__)
+    if (maclen != 16 && maclen != 32) {
+        errno = EINVAL;
+        return -1;
+    }
+    return implementation->state_mac_verify(st_, mac, maclen);
+#else
     uint8_t expected_mac[32];
 
     switch (maclen) {
@@ -202,6 +209,7 @@ aegis256x2_mac_verify(aegis256x2_mac_state *st_, const uint8_t *mac, size_t macl
         errno = EINVAL;
         return -1;
     }
+#endif
 }
 
 void

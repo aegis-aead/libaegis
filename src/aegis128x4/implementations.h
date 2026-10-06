@@ -38,6 +38,7 @@ typedef struct aegis128x4_implementation {
     int (*state_mac_final)(aegis128x4_mac_state *st_, uint8_t *mac, size_t maclen);
     void (*state_mac_reset)(aegis128x4_mac_state *st);
     void (*state_mac_clone)(aegis128x4_mac_state *dst, const aegis128x4_mac_state *src);
+    int (*state_mac_verify)(aegis128x4_mac_state *st_, const uint8_t *mac, size_t maclen);
 } aegis128x4_implementation;
 
 #endif

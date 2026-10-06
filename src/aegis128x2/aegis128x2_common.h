@@ -314,6 +314,92 @@ aegis128x2_mac_nr(uint8_t *mac, size_t maclen, uint64_t adlen, aes_block_t *stat
     }
 }
 
+#ifdef AEGIS_ALWAYS_INLINE
+static AEGIS_ALWAYS_INLINE void
+#else
+static inline void
+#endif
+aegis128x2_mac_finalize(size_t maclen, uint64_t adlen, aes_block_t *state)
+{
+    uint8_t     t[2 * AES_BLOCK_LENGTH];
+    uint8_t     r[RATE];
+    aes_block_t tmp;
+    int         i;
+    const int   d = AES_BLOCK_LENGTH / 16;
+
+    tmp = AES_BLOCK_LOAD_64x2(maclen << 3, adlen << 3);
+    tmp = AES_BLOCK_XOR(tmp, state[2]);
+
+    for (i = 0; i < 7; i++) {
+        aegis128x2_update(state, tmp, tmp);
+    }
+
+    memset(r, 0, sizeof r);
+    if (maclen == 16) {
+#if AES_BLOCK_LENGTH > 16
+        tmp = AES_BLOCK_XOR(state[6], AES_BLOCK_XOR(state[5], state[4]));
+        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[3], state[2]));
+        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[1], state[0]));
+        AES_BLOCK_STORE(t, tmp);
+        for (i = 0; i < d / 2; i++) {
+            memcpy(r, t + i * 32, 16);
+            memcpy(r + RATE / 2, t + i * 32 + 16, 16);
+            aegis128x2_absorb(r, state);
+        }
+        tmp = AES_BLOCK_LOAD_64x2(maclen << 3, d);
+        tmp = AES_BLOCK_XOR(tmp, state[2]);
+        for (i = 0; i < 7; i++) {
+            aegis128x2_update(state, tmp, tmp);
+        }
+#endif
+    } else if (maclen == 32) {
+#if AES_BLOCK_LENGTH > 16
+        tmp = AES_BLOCK_XOR(state[3], state[2]);
+        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[1], state[0]));
+        AES_BLOCK_STORE(t, tmp);
+        tmp = AES_BLOCK_XOR(state[7], state[6]);
+        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[5], state[4]));
+        AES_BLOCK_STORE(t + AES_BLOCK_LENGTH, tmp);
+        for (i = 1; i < d; i++) {
+            memcpy(r, t + i * 16, 16);
+            memcpy(r + RATE / 2, t + AES_BLOCK_LENGTH + i * 16, 16);
+            aegis128x2_absorb(r, state);
+        }
+        tmp = AES_BLOCK_LOAD_64x2(maclen << 3, d);
+        tmp = AES_BLOCK_XOR(tmp, state[2]);
+        for (i = 0; i < 7; i++) {
+            aegis128x2_update(state, tmp, tmp);
+        }
+#endif
+    }
+}
+
+static inline void
+aegis128x2_mac_tag(uint8_t *mac, size_t maclen, const aes_block_t *state)
+{
+    uint8_t     t[AES_BLOCK_LENGTH];
+    aes_block_t tmp;
+
+    if (maclen == 16) {
+        tmp = AES_BLOCK_XOR(state[6], AES_BLOCK_XOR(state[5], state[4]));
+        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[3], state[2]));
+        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[1], state[0]));
+        AES_BLOCK_STORE(t, tmp);
+        memcpy(mac, t, 16);
+    } else if (maclen == 32) {
+        tmp = AES_BLOCK_XOR(state[3], state[2]);
+        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[1], state[0]));
+        AES_BLOCK_STORE(t, tmp);
+        memcpy(mac, t, 16);
+        tmp = AES_BLOCK_XOR(state[7], state[6]);
+        tmp = AES_BLOCK_XOR(tmp, AES_BLOCK_XOR(state[5], state[4]));
+        AES_BLOCK_STORE(t, tmp);
+        memcpy(mac + 16, t, 16);
+    } else {
+        memset(mac, 0, maclen);
+    }
+}
+
 static int
 encrypt_detached(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size_t mlen,
                  const uint8_t *ad, size_t adlen, const uint8_t *npub, const uint8_t *k)
@@ -833,6 +919,35 @@ state_mac_final(aegis128x2_mac_state *st_, uint8_t *mac, size_t maclen)
     memcpy(st->blocks, blocks, sizeof blocks);
 
     return 0;
+}
+
+static int
+state_mac_verify(aegis128x2_mac_state *st_, const uint8_t *mac, size_t maclen)
+{
+    uint8_t                      expected_mac[32];
+    aegis_blocks                 blocks;
+    _aegis128x2_mac_state *const st =
+        (_aegis128x2_mac_state *) ((((uintptr_t) &st_->opaque) + (ALIGNMENT - 1)) &
+                                   ~(uintptr_t) (ALIGNMENT - 1));
+    size_t left;
+
+    memcpy(blocks, st->blocks, sizeof blocks);
+
+    left = st->adlen % RATE;
+    if (left != 0) {
+        memset(st->buf + left, 0, RATE - left);
+        aegis128x2_absorb(st->buf, blocks);
+    }
+    aegis128x2_mac_finalize(maclen, st->adlen, blocks);
+
+    memcpy(st->blocks, blocks, sizeof blocks);
+
+    if (maclen == 16) {
+        aegis128x2_mac_tag(expected_mac, 16, blocks);
+        return aegis_tag_compare(expected_mac, mac, 16);
+    }
+    aegis128x2_mac_tag(expected_mac, 32, blocks);
+    return aegis_tag_compare(expected_mac, mac, 32);
 }
 
 static void

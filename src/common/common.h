@@ -159,6 +159,34 @@ rotl32(const uint32_t x, const int b)
 
 #define COMPILER_ASSERT(X) (void) sizeof(char[(X) ? 1 : -1])
 
+static inline int
+aegis_tag_compare(const uint8_t *x, const uint8_t *y, const size_t n)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    uint64_t acc64 = 0U;
+    uint64_t x64, y64;
+    uint16_t acc;
+    size_t   i;
+
+    for (i = 0; i < n; i += 8) {
+        memcpy(&x64, x + i, sizeof x64);
+        memcpy(&y64, y + i, sizeof y64);
+        acc64 |= x64 ^ y64;
+    }
+    acc64 |= acc64 >> 32;
+    acc64 |= acc64 >> 16;
+    acc64 |= acc64 >> 8;
+    acc = (uint16_t) (acc64 & 0xff);
+    __asm__("" : "+r"(acc) :);
+    acc--;
+    acc >>= 15;
+
+    return (int) acc - 1;
+#else
+    return n == 16 ? aegis_verify_16(x, y) : aegis_verify_32(x, y);
+#endif
+}
+
 #ifndef ERANGE
 #    define ERANGE 34
 #endif

@@ -76,6 +76,7 @@ struct aegis256x2_implementation aegis256x2_soft_implementation = {
     .state_mac_final         = state_mac_final,
     .state_mac_reset         = state_mac_reset,
     .state_mac_clone         = state_mac_clone,
+    .state_mac_verify        = state_mac_verify,
 };
 
 #endif
