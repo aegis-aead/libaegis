@@ -6,7 +6,7 @@ var io_source = std.Random.IoSource{ .io = testing.io };
 const random = io_source.interface();
 
 const MemoryFile = struct {
-    data: std.ArrayListUnmanaged(u8),
+    data: std.ArrayList(u8),
     allocator: std.mem.Allocator,
 
     fn init(allocator: std.mem.Allocator) MemoryFile {
@@ -4359,7 +4359,7 @@ const FuzzOp = enum(u8) {
 };
 
 const FuzzState = struct {
-    shadow: std.ArrayListUnmanaged(u8),
+    shadow: std.ArrayList(u8),
     file: *MemoryFile,
     ctx: aegis.aegis128l_raf_ctx,
     merkle_buf: [4096]u8,
@@ -5066,7 +5066,7 @@ test "fuzz - RAF without merkle random operations" {
     var key: [aegis.aegis128l_KEYBYTES]u8 = undefined;
     rand.bytes(&key);
 
-    var shadow: std.ArrayListUnmanaged(u8) = .empty;
+    var shadow: std.ArrayList(u8) = .empty;
     defer shadow.deinit(testing.allocator);
 
     var scratch_buf: [aegis.AEGIS128L_RAF_SCRATCH_SIZE(1024)]u8 align(aegis.AEGIS_RAF_SCRATCH_ALIGN) =
@@ -5210,7 +5210,7 @@ test "fuzz - aegis256 random operations with merkle" {
     var key: [aegis.aegis256_KEYBYTES]u8 = undefined;
     rand.bytes(&key);
 
-    var shadow: std.ArrayListUnmanaged(u8) = .empty;
+    var shadow: std.ArrayList(u8) = .empty;
     defer shadow.deinit(testing.allocator);
 
     const max_chunks: u64 = 16;
