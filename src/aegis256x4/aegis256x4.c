@@ -10,6 +10,7 @@
 #include "aegis256x4_avx512.h"
 #include "aegis256x4_avx512vl.h"
 #include "aegis256x4_neon_aes.h"
+#include "aegis256x4_neon_sha3.h"
 
 #ifndef HAS_HW_AES
 #    include "aegis256x4_soft.h"
@@ -234,6 +235,12 @@ aegis256x4_pick_best_implementation(void)
 #endif
 
 #if defined(__aarch64__) || defined(_M_ARM64)
+#    ifndef __APPLE__ /* The SHA3 kernel is slower on Apple Silicon. */
+    if (aegis_runtime_has_neon_sha3()) {
+        implementation = &aegis256x4_neon_sha3_implementation;
+        return 0;
+    }
+#    endif
     if (aegis_runtime_has_neon_aes()) {
         implementation = &aegis256x4_neon_aes_implementation;
         return 0;
