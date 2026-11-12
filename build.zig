@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
         target = b.resolveTargetQuery(query);
     }
     const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseFast });
-    const version = std.SemanticVersion.parse("0.10.6") catch unreachable;
+    const version = std.SemanticVersion.parse("0.10.7") catch unreachable;
     const linkage = b.option(std.builtin.LinkMode, "linkage", "Link mode") orelse .static;
 
     const lib = b.addLibrary(.{
