@@ -119,6 +119,16 @@ enum aegis_bulk_operation {
 #    define AEGIS_NEON_ZERO() vmovq_n_u8(0)
 #endif
 
+/* GCC 8 only has the 16-bit forms of EOR3 and BCAX. They are bitwise, so the lane size doesn't matter. */
+#if defined(__aarch64__) && defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 9
+#    define veor3q_u8(A, B, C) \
+        vreinterpretq_u8_u16(  \
+            veor3q_u16(vreinterpretq_u16_u8(A), vreinterpretq_u16_u8(B), vreinterpretq_u16_u8(C)))
+#    define vbcaxq_u8(A, B, C) \
+        vreinterpretq_u8_u16(  \
+            vbcaxq_u16(vreinterpretq_u16_u8(A), vreinterpretq_u16_u8(B), vreinterpretq_u16_u8(C)))
+#endif
+
 #if defined(__has_attribute)
 #    if __has_attribute(code_align)
 #        define CRYPTO_ALIGN_LOOP(x) __attribute__((code_align(x)))
