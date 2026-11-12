@@ -17,7 +17,7 @@
 #    include <arm_neon.h>
 
 #    ifdef __clang__
-#        pragma clang attribute push(__attribute__((target("neon,crypto,aes"))), \
+#        pragma clang attribute push(__attribute__((target("neon,crypto,aes,fuse-aes"))), \
                                      apply_to = function)
 #    elif defined(__GNUC__)
 #        pragma GCC target("+simd+crypto")
@@ -64,8 +64,8 @@ AES_BLOCK_STORE(uint8_t *a, const aes_block_t b)
 static inline aes_block_t
 AES_ENC(const aes_block_t a, const aes_block_t b)
 {
-    return (aes_block_t) { veorq_u8(vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), a.b0)), b.b0),
-                           veorq_u8(vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), a.b1)), b.b1) };
+    return (aes_block_t) { veorq_u8(vaesmcq_u8(vaeseq_u8(AEGIS_NEON_ZERO(), a.b0)), b.b0),
+                           veorq_u8(vaesmcq_u8(vaeseq_u8(AEGIS_NEON_ZERO(), a.b1)), b.b1) };
 }
 
 static inline void

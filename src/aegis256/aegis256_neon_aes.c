@@ -17,7 +17,7 @@
 #    include <arm_neon.h>
 
 #    ifdef __clang__
-#        pragma clang attribute push(__attribute__((target("neon,crypto,aes"))), \
+#        pragma clang attribute push(__attribute__((target("neon,crypto,aes,fuse-aes"))), \
                                      apply_to = function)
 #    elif defined(__GNUC__)
 #        pragma GCC target("+simd+crypto")
@@ -32,7 +32,7 @@ typedef uint8x16_t aes_block_t;
 #    define AES_BLOCK_LOAD(A)         vld1q_u8(A)
 #    define AES_BLOCK_LOAD_64x2(A, B) vreinterpretq_u8_u64(vsetq_lane_u64((A), vmovq_n_u64(B), 1))
 #    define AES_BLOCK_STORE(A, B)     vst1q_u8((A), (B))
-#    define AES_ENC(A, B)             veorq_u8(vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), (A))), (B))
+#    define AES_ENC(A, B)             veorq_u8(vaesmcq_u8(vaeseq_u8(AEGIS_NEON_ZERO(), (A))), (B))
 
 static inline void
 aegis256_update(aes_block_t *const state, const aes_block_t d)
@@ -48,10 +48,12 @@ aegis256_update(aes_block_t *const state, const aes_block_t d)
     state[0] = AES_BLOCK_XOR(AES_ENC(tmp, state[0]), d);
 }
 
-#    ifdef AEGIS_ALWAYS_INLINE
+#    if defined(AEGIS_ALWAYS_INLINE) && defined(__APPLE__)
 
 /* Represent each state word as x ^ y.
  * AESE combines the terms, so the reconstruction XOR can run alongside the AES round.
+ *
+ * This is only a win on Apple CPUs, where the register copies it needs are free. It is slower than the generic code on Neoverse N1 and V1.
  */
 static AEGIS_ALWAYS_INLINE size_t
 aegis256_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state,
@@ -60,9 +62,6 @@ aegis256_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state,
     const size_t full = len - len % 16;
     size_t       i;
 
-    if (full < 256) {
-        return 0;
-    }
     aes_block_t x0 = state[0], y0 = vmovq_n_u8(0);
     aes_block_t x1 = state[1], y1 = vmovq_n_u8(0);
     aes_block_t x2 = state[2], y2 = vmovq_n_u8(0);
@@ -70,6 +69,7 @@ aegis256_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state,
     aes_block_t x4 = state[4], y4 = vmovq_n_u8(0);
     aes_block_t x5 = state[5], y5 = vmovq_n_u8(0);
 
+    CRYPTO_ALIGN_LOOP(64)
     for (i = 0; i < full; i += 16) {
         aes_block_t m0 = operation == AEGIS_BULK_STREAM ? vmovq_n_u8(0) : AES_BLOCK_LOAD(src + i);
         aes_block_t r0 = vaesmcq_u8(vaeseq_u8(x5, y5));
@@ -114,13 +114,17 @@ aegis256_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state,
     return full;
 }
 
+/* Checked before the call, so that short inputs don't pay for it. */
+#        define AEGIS_BULK_MIN 256
+
 static AEGIS_NOINLINE size_t
 aegis256_encrypt_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state)
 {
     return aegis256_bulk(dst, src, len, state, AEGIS_BULK_ENCRYPT);
 }
 
-#        define AEGIS_ENCRYPT_BULK aegis256_encrypt_bulk
+#        define AEGIS_ENCRYPT_BULK(dst, src, len, state) \
+            ((len) < AEGIS_BULK_MIN ? 0 : aegis256_encrypt_bulk((dst), (src), (len), (state)))
 
 static AEGIS_NOINLINE size_t
 aegis256_decrypt_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state)
@@ -128,11 +132,16 @@ aegis256_decrypt_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t 
     return aegis256_bulk(dst, src, len, state, AEGIS_BULK_DECRYPT);
 }
 
-#        define AEGIS_DECRYPT_BULK aegis256_decrypt_bulk
+#        define AEGIS_DECRYPT_BULK(dst, src, len, state) \
+            ((len) < AEGIS_BULK_MIN ? 0 : aegis256_decrypt_bulk((dst), (src), (len), (state)))
 
+/* The MAC code calls this one too, and a check before the call made short MACs slower. So the check stays inside. */
 static AEGIS_NOINLINE size_t
 aegis256_absorb_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state)
 {
+    if (len < AEGIS_BULK_MIN) {
+        return 0;
+    }
     return aegis256_bulk(dst, src, len, state, AEGIS_BULK_ABSORB);
 }
 
@@ -144,7 +153,8 @@ aegis256_stream_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *
     return aegis256_bulk(dst, src, len, state, AEGIS_BULK_STREAM);
 }
 
-#        define AEGIS_STREAM_BULK aegis256_stream_bulk
+#        define AEGIS_STREAM_BULK(dst, src, len, state) \
+            ((len) < AEGIS_BULK_MIN ? 0 : aegis256_stream_bulk((dst), (src), (len), (state)))
 
 static AEGIS_NOINLINE size_t
 aegis256_stream_xor_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state)
@@ -152,7 +162,8 @@ aegis256_stream_xor_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block
     return aegis256_bulk(dst, src, len, state, AEGIS_BULK_STREAM_XOR);
 }
 
-#        define AEGIS_STREAM_XOR_BULK aegis256_stream_xor_bulk
+#        define AEGIS_STREAM_XOR_BULK(dst, src, len, state) \
+            ((len) < AEGIS_BULK_MIN ? 0 : aegis256_stream_xor_bulk((dst), (src), (len), (state)))
 
 #    endif
 

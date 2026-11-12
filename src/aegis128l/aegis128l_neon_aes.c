@@ -17,7 +17,7 @@
 #    include <arm_neon.h>
 
 #    ifdef __clang__
-#        pragma clang attribute push(__attribute__((target("neon,crypto,aes"))), \
+#        pragma clang attribute push(__attribute__((target("neon,crypto,aes,fuse-aes"))), \
                                      apply_to = function)
 #    elif defined(__GNUC__)
 #        pragma GCC target("+simd+crypto")
@@ -32,7 +32,7 @@ typedef uint8x16_t aes_block_t;
 #    define AES_BLOCK_LOAD(A)         vld1q_u8(A)
 #    define AES_BLOCK_LOAD_64x2(A, B) vreinterpretq_u8_u64(vsetq_lane_u64((A), vmovq_n_u64(B), 1))
 #    define AES_BLOCK_STORE(A, B)     vst1q_u8((A), (B))
-#    define AES_ENC(A, B)             veorq_u8(vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), (A))), (B))
+#    define AES_ENC(A, B)             veorq_u8(vaesmcq_u8(vaeseq_u8(AEGIS_NEON_ZERO(), (A))), (B))
 
 static inline void
 aegis128l_update(aes_block_t *const state, const aes_block_t d1, const aes_block_t d2)

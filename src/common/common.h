@@ -107,6 +107,18 @@ enum aegis_bulk_operation {
 #    define AEGIS_NOINLINE      __declspec(noinline)
 #endif
 
+/* GCC reuses one zeroed register and copies it before every AESE, which is slow. This gives each AESE a fresh zero instead. */
+#if defined(__aarch64__) && defined(__GNUC__) && !defined(__clang__)
+#    define AEGIS_NEON_ZERO()                                   \
+        __extension__({                                         \
+            uint8x16_t z_;                                      \
+            __asm__ __volatile__("movi %0.16b, #0" : "=w"(z_)); \
+            z_;                                                 \
+        })
+#else
+#    define AEGIS_NEON_ZERO() vmovq_n_u8(0)
+#endif
+
 #if defined(__has_attribute)
 #    if __has_attribute(code_align)
 #        define CRYPTO_ALIGN_LOOP(x) __attribute__((code_align(x)))

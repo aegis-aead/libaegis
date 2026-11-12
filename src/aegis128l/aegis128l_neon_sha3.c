@@ -20,7 +20,7 @@
 #    include <arm_neon.h>
 
 #    ifdef __clang__
-#        pragma clang attribute push(__attribute__((target("neon,crypto,aes,sha3"))), \
+#        pragma clang attribute push(__attribute__((target("neon,crypto,aes,sha3,fuse-aes"))), \
                                      apply_to = function)
 #    elif defined(__GNUC__)
 #        if __GNUC__ < 14
@@ -40,7 +40,7 @@ typedef uint8x16_t aes_block_t;
 #    define AES_BLOCK_LOAD(A)         vld1q_u8(A)
 #    define AES_BLOCK_LOAD_64x2(A, B) vreinterpretq_u8_u64(vsetq_lane_u64((A), vmovq_n_u64(B), 1))
 #    define AES_BLOCK_STORE(A, B)     vst1q_u8((A), (B))
-#    define AES_ENC0(A)               vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), (A)))
+#    define AES_ENC0(A)               vaesmcq_u8(vaeseq_u8(AEGIS_NEON_ZERO(), (A)))
 #    define AES_ENC(A, B)             AES_BLOCK_XOR(AES_ENC0(A), (B))
 
 static inline void
@@ -61,81 +61,68 @@ aegis128l_update(aes_block_t *const state, const aes_block_t d1, const aes_block
 
 #    ifdef AEGIS_ALWAYS_INLINE
 
-/* AESE combines the two terms of a split word before its S-box.
- * Keeping words 3 and 7 complemented also lets BCAX form the keystream.
- */
+/* Words 3 and 7 stay complemented so that BCAX can produce the keystream. AESE undoes the complement with an all-ones key. */
 static AEGIS_ALWAYS_INLINE size_t
 aegis128l_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state,
                const enum aegis_bulk_operation operation)
 {
-    const size_t   full         = len - len % 32;
-    const unsigned split        = operation == AEGIS_BULK_ABSORB    ? 0xff
-                                  : operation == AEGIS_BULK_DECRYPT ? 0x77
-                                                                    : 0;
-    const int      complemented = operation != AEGIS_BULK_ABSORB;
-    aes_block_t    x[8], y[8], r[8];
-    size_t         i, j;
+    const size_t full = len - len % 32;
+    aes_block_t  x[8], r[8];
+    aes_block_t  d0 = vmovq_n_u8(0), d1 = vmovq_n_u8(0);
+    size_t       i, j;
 
-    if (full < 256) {
-        return 0;
-    }
     for (j = 0; j < 8; j++) {
-        x[j] = complemented && (j == 3 || j == 7) ? vmvnq_u8(state[j]) : state[j];
-        y[j] = vmovq_n_u8(0);
+        x[j] = (j == 3 || j == 7) ? vmvnq_u8(state[j]) : state[j];
     }
     CRYPTO_ALIGN_LOOP(32)
     for (i = 0; i < full; i += 32) {
         aes_block_t m0 = operation == AEGIS_BULK_STREAM ? vmovq_n_u8(0) : AES_BLOCK_LOAD(src + i);
         aes_block_t m1 =
             operation == AEGIS_BULK_STREAM ? vmovq_n_u8(0) : AES_BLOCK_LOAD(src + i + 16);
+        aes_block_t z0, z1;
 
         for (j = 0; j < 8; j++) {
             const size_t prev = (j + 7) % 8;
 
-            if (complemented && (prev == 3 || prev == 7)) {
+            if (prev == 3 || prev == 7) {
                 r[j] = vaesmcq_u8(vaeseq_u8(x[prev], vmovq_n_u8(255)));
-            } else if (split & (1U << prev)) {
-                r[j] = vaesmcq_u8(vaeseq_u8(x[prev], y[prev]));
             } else {
+                /* Not AEGIS_NEON_ZERO(): GCC is slower with it in this loop. */
                 r[j] = vaesmcq_u8(vaeseq_u8(vmovq_n_u8(0), x[prev]));
             }
         }
-        for (j = 0; j < 8; j++) {
-            if (split & (1U << j)) {
-                x[j] = AES_BLOCK_XOR(x[j], y[j]);
-            }
-        }
-        if (operation != AEGIS_BULK_ABSORB) {
-            aes_block_t z0 = vbcaxq_u8(AES_BLOCK_XOR3(m0, x[6], x[1]), x[2], x[3]);
-            aes_block_t z1 = vbcaxq_u8(AES_BLOCK_XOR3(m1, x[5], x[2]), x[6], x[7]);
-
-            AES_BLOCK_STORE(dst + i, z0);
-            AES_BLOCK_STORE(dst + i + 16, z1);
-            if (operation == AEGIS_BULK_DECRYPT) {
-                m0 = z0;
-                m1 = z1;
-            } else if (operation == AEGIS_BULK_STREAM_XOR) {
-                m0 = vmovq_n_u8(0);
-                m1 = vmovq_n_u8(0);
-            }
+        z0 = vbcaxq_u8(AES_BLOCK_XOR3(m0, x[6], x[1]), x[2], x[3]);
+        z1 = vbcaxq_u8(AES_BLOCK_XOR3(m1, x[5], x[2]), x[6], x[7]);
+        AES_BLOCK_STORE(dst + i, z0);
+        AES_BLOCK_STORE(dst + i + 16, z1);
+        if (operation == AEGIS_BULK_DECRYPT) {
+            /* The plaintext is ready late, so words 0 and 4 get it one block later. Until then, AESE mixes it in as its key. */
+            r[1] = vaesmcq_u8(vaeseq_u8(x[0], d0));
+            r[5] = vaesmcq_u8(vaeseq_u8(x[4], d1));
+            m0   = d0;
+            m1   = d1;
+            d0   = z0;
+            d1   = z1;
+        } else if (operation == AEGIS_BULK_STREAM_XOR) {
+            m0 = vmovq_n_u8(0);
+            m1 = vmovq_n_u8(0);
         }
         for (j = 0; j < 8; j++) {
-            if (split & (1U << j)) {
-                y[j] = r[j];
-            } else {
-                x[j] = AES_BLOCK_XOR(x[j], r[j]);
-            }
+            x[j] = AES_BLOCK_XOR(x[j], r[j]);
         }
         x[0] = AES_BLOCK_XOR(x[0], m0);
         x[4] = AES_BLOCK_XOR(x[4], m1);
     }
+    x[0] = AES_BLOCK_XOR(x[0], d0);
+    x[4] = AES_BLOCK_XOR(x[4], d1);
     for (j = 0; j < 8; j++) {
-        state[j] = (split & (1U << j))                    ? AES_BLOCK_XOR(x[j], y[j])
-                   : (complemented && (j == 3 || j == 7)) ? vmvnq_u8(x[j])
-                                                          : x[j];
+        state[j] = (j == 3 || j == 7) ? vmvnq_u8(x[j]) : x[j];
     }
     return full;
 }
+
+/* Checked before the call, so that short inputs don't pay for it. */
+#        define AEGIS_BULK_MIN 256
 
 static AEGIS_NOINLINE size_t
 aegis128l_encrypt_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state)
@@ -143,7 +130,8 @@ aegis128l_encrypt_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t
     return aegis128l_bulk(dst, src, len, state, AEGIS_BULK_ENCRYPT);
 }
 
-#        define AEGIS_ENCRYPT_BULK aegis128l_encrypt_bulk
+#        define AEGIS_ENCRYPT_BULK(dst, src, len, state) \
+            ((len) < AEGIS_BULK_MIN ? 0 : aegis128l_encrypt_bulk((dst), (src), (len), (state)))
 
 static AEGIS_NOINLINE size_t
 aegis128l_decrypt_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state)
@@ -151,15 +139,8 @@ aegis128l_decrypt_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t
     return aegis128l_bulk(dst, src, len, state, AEGIS_BULK_DECRYPT);
 }
 
-#        define AEGIS_DECRYPT_BULK aegis128l_decrypt_bulk
-
-static AEGIS_NOINLINE size_t
-aegis128l_absorb_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state)
-{
-    return aegis128l_bulk(dst, src, len, state, AEGIS_BULK_ABSORB);
-}
-
-#        define AEGIS_ABSORB_BULK aegis128l_absorb_bulk
+#        define AEGIS_DECRYPT_BULK(dst, src, len, state) \
+            ((len) < AEGIS_BULK_MIN ? 0 : aegis128l_decrypt_bulk((dst), (src), (len), (state)))
 
 static AEGIS_NOINLINE size_t
 aegis128l_stream_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state)
@@ -167,7 +148,8 @@ aegis128l_stream_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t 
     return aegis128l_bulk(dst, src, len, state, AEGIS_BULK_STREAM);
 }
 
-#        define AEGIS_STREAM_BULK aegis128l_stream_bulk
+#        define AEGIS_STREAM_BULK(dst, src, len, state) \
+            ((len) < AEGIS_BULK_MIN ? 0 : aegis128l_stream_bulk((dst), (src), (len), (state)))
 
 static AEGIS_NOINLINE size_t
 aegis128l_stream_xor_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_block_t *state)
@@ -175,7 +157,8 @@ aegis128l_stream_xor_bulk(uint8_t *dst, const uint8_t *src, size_t len, aes_bloc
     return aegis128l_bulk(dst, src, len, state, AEGIS_BULK_STREAM_XOR);
 }
 
-#        define AEGIS_STREAM_XOR_BULK aegis128l_stream_xor_bulk
+#        define AEGIS_STREAM_XOR_BULK(dst, src, len, state) \
+            ((len) < AEGIS_BULK_MIN ? 0 : aegis128l_stream_xor_bulk((dst), (src), (len), (state)))
 
 #    endif
 
