@@ -13,9 +13,11 @@
 #    error "AEGIS_LANES_WORDS must be 6 or 8"
 #endif
 
+#define AEGIS_LANES_WHOLE ((size_t) -1 - ((size_t) -1) % AEGIS_LANES_RATE)
+
 #if AES_LANE_LENGTH == AES_BLOCK_LENGTH
 #    define AEGIS_LANES_COPY
-#    define AEGIS_LANES_CHUNK ((size_t) -1 - ((size_t) -1) % AEGIS_LANES_RATE)
+#    define AEGIS_LANES_CHUNK AEGIS_LANES_WHOLE
 #    ifndef AEGIS_LANES_MIN
 #        error "AEGIS_LANES_MIN must be defined with a single group"
 #    endif
@@ -26,6 +28,10 @@
 /* 512 bytes was the fastest on Zen 4: with short chunks, the CPU overlaps consecutive groups. */
 #ifndef AEGIS_LANES_CHUNK
 #    define AEGIS_LANES_CHUNK 512
+#endif
+
+#ifndef AES_LANE_LOOP_ALIGN
+#    define AES_LANE_LOOP_ALIGN
 #endif
 
 typedef aes_lane_t aegis_lanes_state[AEGIS_LANES_WORDS];
@@ -60,10 +66,37 @@ aegis_lanes_store(uint8_t *st, const aes_lane_t *const s)
 #endif
 }
 
+/*
+ * A lane header that defines AES_LANE_SHA3 also provides XOR3, BCAX, NOT, ENC0 and ENC0_NOT.
+ * With 8 words, the bulk loop then keeps words 3 and 7 inverted, so that the keystream can use BCAX.
+ * With 6 words, this doesn't save anything.
+ */
+#if defined(AES_LANE_SHA3) && AEGIS_LANES_WORDS == 8
+#    define AEGIS_LANES_INVERT 1
+#else
+#    define AEGIS_LANES_INVERT 0
+#endif
+
+/* AES(a) ^ b ^ d, where a may be inverted. */
+static AEGIS_ALWAYS_INLINE aes_lane_t
+aegis_lanes_enc_xor(const aes_lane_t a, const int inverted, const aes_lane_t b, const aes_lane_t d)
+{
+#ifdef AES_LANE_SHA3
+    if (inverted) {
+        return AES_LANE_XOR3(b, AES_LANE_ENC0_NOT(a), d);
+    }
+    return AES_LANE_XOR3(b, AES_LANE_ENC0(a), d);
+#else
+    (void) inverted;
+    return AES_LANE_XOR(AES_LANE_ENC(a, b), d);
+#endif
+}
+
 #if AEGIS_LANES_WORDS == 8
 
 static AEGIS_ALWAYS_INLINE void
-aegis_lanes_update(aes_lane_t *const s, const aes_lane_t d1, const aes_lane_t d2)
+aegis_lanes_update_inv(aes_lane_t *const s, const aes_lane_t d1, const aes_lane_t d2,
+                       const int inverted)
 {
     aes_lane_t t;
 
@@ -71,11 +104,17 @@ aegis_lanes_update(aes_lane_t *const s, const aes_lane_t d1, const aes_lane_t d2
     s[7] = AES_LANE_ENC(s[6], s[7]);
     s[6] = AES_LANE_ENC(s[5], s[6]);
     s[5] = AES_LANE_ENC(s[4], s[5]);
-    s[4] = AES_LANE_XOR(AES_LANE_ENC(s[3], s[4]), d2);
+    s[4] = aegis_lanes_enc_xor(s[3], inverted, s[4], d2);
     s[3] = AES_LANE_ENC(s[2], s[3]);
     s[2] = AES_LANE_ENC(s[1], s[2]);
     s[1] = AES_LANE_ENC(s[0], s[1]);
-    s[0] = AES_LANE_XOR(AES_LANE_ENC(t, s[0]), d1);
+    s[0] = aegis_lanes_enc_xor(t, inverted, s[0], d1);
+}
+
+static AEGIS_ALWAYS_INLINE void
+aegis_lanes_update(aes_lane_t *const s, const aes_lane_t d1, const aes_lane_t d2)
+{
+    aegis_lanes_update_inv(s, d1, d2, 0);
 }
 
 #else
@@ -91,7 +130,7 @@ aegis_lanes_update(aes_lane_t *const s, const aes_lane_t d)
     s[3] = AES_LANE_ENC(s[2], s[3]);
     s[2] = AES_LANE_ENC(s[1], s[2]);
     s[1] = AES_LANE_ENC(s[0], s[1]);
-    s[0] = AES_LANE_XOR(AES_LANE_ENC(t, s[0]), d);
+    s[0] = aegis_lanes_enc_xor(t, 0, s[0], d);
 }
 
 #endif
@@ -105,6 +144,11 @@ aegis_lanes_run(uint8_t *dst, const uint8_t *src, size_t off, size_t end, uint8_
     size_t            i;
 
     aegis_lanes_load(s, st);
+#if AEGIS_LANES_INVERT
+    s[3] = AES_LANE_NOT(s[3]);
+    s[7] = AES_LANE_NOT(s[7]);
+#endif
+    AES_LANE_LOOP_ALIGN
     for (i = off; i < end; i += AEGIS_LANES_RATE) {
 #if AEGIS_LANES_WORDS == 8
         aes_lane_t m0, m1, z0, z1;
@@ -116,10 +160,15 @@ aegis_lanes_run(uint8_t *dst, const uint8_t *src, size_t off, size_t end, uint8_
             m1 = AES_LANE_LOAD(src + i + AES_BLOCK_LENGTH);
         }
         if (operation != AEGIS_BULK_ABSORB) {
+#    if AEGIS_LANES_INVERT
+            z0 = AES_LANE_BCAX(AES_LANE_XOR3(m0, s[6], s[1]), s[2], s[3]);
+            z1 = AES_LANE_BCAX(AES_LANE_XOR3(m1, s[5], s[2]), s[6], s[7]);
+#    else
             z0 = AES_LANE_XOR(AES_LANE_XOR(s[6], s[1]), AES_LANE_AND(s[2], s[3]));
             z1 = AES_LANE_XOR(AES_LANE_XOR(s[5], s[2]), AES_LANE_AND(s[6], s[7]));
             z0 = AES_LANE_XOR(z0, m0);
             z1 = AES_LANE_XOR(z1, m1);
+#    endif
             if (store_output) {
                 AES_LANE_STORE(dst + i, z0);
                 AES_LANE_STORE(dst + i + AES_BLOCK_LENGTH, z1);
@@ -131,7 +180,7 @@ aegis_lanes_run(uint8_t *dst, const uint8_t *src, size_t off, size_t end, uint8_
                 m0 = m1 = AES_LANE_ZERO();
             }
         }
-        aegis_lanes_update(s, m0, m1);
+        aegis_lanes_update_inv(s, m0, m1, AEGIS_LANES_INVERT);
 #else
         aes_lane_t m, z;
 
@@ -155,6 +204,10 @@ aegis_lanes_run(uint8_t *dst, const uint8_t *src, size_t off, size_t end, uint8_
         aegis_lanes_update(s, m);
 #endif
     }
+#if AEGIS_LANES_INVERT
+    s[3] = AES_LANE_NOT(s[3]);
+    s[7] = AES_LANE_NOT(s[7]);
+#endif
     aegis_lanes_store(st, s);
 }
 
