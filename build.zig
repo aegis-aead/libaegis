@@ -66,7 +66,6 @@ pub fn build(b: *std.Build) void {
         "src/aegis128x4/aegis128x4_avx2.c",
         "src/aegis128x4/aegis128x4_avx512.c",
         "src/aegis128x4/aegis128x4_neon_aes.c",
-        "src/aegis128x4/aegis128x4_neon_sha3.c",
         "src/aegis128x4/aegis128x4_soft.c",
         "src/aegis128x4/aegis128x4.c",
 
@@ -89,7 +88,6 @@ pub fn build(b: *std.Build) void {
         "src/aegis256x4/aegis256x4_avx512.c",
         "src/aegis256x4/aegis256x4_avx512vl.c",
         "src/aegis256x4/aegis256x4_neon_aes.c",
-        "src/aegis256x4/aegis256x4_neon_sha3.c",
         "src/aegis256x4/aegis256x4_soft.c",
         "src/aegis256x4/aegis256x4.c",
 

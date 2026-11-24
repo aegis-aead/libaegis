@@ -107,12 +107,6 @@ enum aegis_bulk_operation {
 #    define AEGIS_NOINLINE      __declspec(noinline)
 #endif
 
-/* x86-64 without AVX-512 only has 16 vector registers, so the X2 and X4 backends process lanes in groups there, see aegis_lanes.h. */
-#if defined(AEGIS_ALWAYS_INLINE) && (defined(__x86_64__) || defined(_M_AMD64)) && \
-    !defined(__AVX512VL__)
-#    define AEGIS_LANES_X86_64
-#endif
-
 /*
  * With ASan, GCC can place a 64-byte stack buffer at an address that isn't 64-byte aligned, and still use aligned AVX-512 moves on it, which crash.
  * Hiding the address from GCC makes it use unaligned moves.

@@ -11,11 +11,6 @@
 #    define AEGIS_STREAM_XOR_BULK(dst, src, len, state) 0
 #endif
 
-/* Shorter inputs go through a copy of encrypt_detached() without the bulk call, which alone makes the compiler allocate registers worse in the whole function. */
-#ifndef AEGIS_ENCRYPT_DETACHED_BULK
-#    define AEGIS_ENCRYPT_DETACHED_BULK AEGIS_ENCRYPT_BULK
-#endif
-
 #define RATE      32
 #define ALIGNMENT 32
 
@@ -332,18 +327,9 @@ aegis256x2_mac_nr(uint8_t *mac, size_t maclen, uint64_t adlen, aes_block_t *stat
     aegis256x2_mac_tag(mac, maclen, state);
 }
 
-#ifdef AEGIS_ENCRYPT_DETACHED_BULK_MIN
-#    define AEGIS_MAYBE_BULK(x) (bulk ? (x) : 0)
-static AEGIS_ALWAYS_INLINE int
-encrypt_detached_impl(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size_t mlen,
-                      const uint8_t *ad, size_t adlen, const uint8_t *npub, const uint8_t *k,
-                      const int bulk)
-#else
-#    define AEGIS_MAYBE_BULK(x) (x)
 static int
 encrypt_detached(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size_t mlen,
                  const uint8_t *ad, size_t adlen, const uint8_t *npub, const uint8_t *k)
-#endif
 {
     aegis_blocks                    state;
     CRYPTO_ALIGN(ALIGNMENT) uint8_t src[RATE];
@@ -360,7 +346,7 @@ encrypt_detached(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size
         memcpy(src, ad + i, adlen % RATE);
         aegis256x2_absorb(src, state);
     }
-    i = AEGIS_MAYBE_BULK(AEGIS_ENCRYPT_DETACHED_BULK(c, m, mlen, state));
+    i = AEGIS_ENCRYPT_BULK(c, m, mlen, state);
     for (; i + RATE <= mlen; i += RATE) {
         aegis256x2_enc(c + i, m + i, state);
     }
@@ -375,33 +361,6 @@ encrypt_detached(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size
 
     return 0;
 }
-#undef AEGIS_MAYBE_BULK
-
-#ifdef AEGIS_ENCRYPT_DETACHED_BULK_MIN
-static AEGIS_NOINLINE int
-encrypt_detached_bulk(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size_t mlen,
-                      const uint8_t *ad, size_t adlen, const uint8_t *npub, const uint8_t *k)
-{
-    return encrypt_detached_impl(c, mac, maclen, m, mlen, ad, adlen, npub, k, 1);
-}
-
-static AEGIS_NOINLINE int
-encrypt_detached_short(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size_t mlen,
-                       const uint8_t *ad, size_t adlen, const uint8_t *npub, const uint8_t *k)
-{
-    return encrypt_detached_impl(c, mac, maclen, m, mlen, ad, adlen, npub, k, 0);
-}
-
-static int
-encrypt_detached(uint8_t *c, uint8_t *mac, size_t maclen, const uint8_t *m, size_t mlen,
-                 const uint8_t *ad, size_t adlen, const uint8_t *npub, const uint8_t *k)
-{
-    if (mlen >= AEGIS_ENCRYPT_DETACHED_BULK_MIN) {
-        return encrypt_detached_bulk(c, mac, maclen, m, mlen, ad, adlen, npub, k);
-    }
-    return encrypt_detached_short(c, mac, maclen, m, mlen, ad, adlen, npub, k);
-}
-#endif
 
 static int
 decrypt_detached(uint8_t *m, const uint8_t *c, size_t clen, const uint8_t *mac, size_t maclen,
