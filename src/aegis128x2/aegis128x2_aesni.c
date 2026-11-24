@@ -81,6 +81,14 @@ aegis128x2_update(aes_block_t *const state, const aes_block_t d1, const aes_bloc
     state[4] = AES_BLOCK_XOR(state[4], d2);
 }
 
+/* Not with GCC, where it made short inputs slower. */
+#    if defined(AEGIS_LANES_X86_64) && defined(__clang__)
+#        define AEGIS_AESNI_LANES 1
+#        include "../common/aesni_lane.h"
+#        define AEGIS_LANES_WORDS 8
+#        include "../common/aegis_lanes.h"
+#    endif
+
 #    include "aegis128x2_common.h"
 
 struct aegis128x2_implementation aegis128x2_aesni_implementation = {

@@ -85,6 +85,13 @@ aegis256x4_update(aes_block_t *const state, const aes_block_t d)
     state[0] = AES_BLOCK_XOR(AES_ENC(tmp, state[0]), d);
 }
 
+#    ifdef AEGIS_LANES_X86_64
+#        define AEGIS_AESNI_LANES 2
+#        include "../common/aesni_lane.h"
+#        define AEGIS_LANES_WORDS 6
+#        include "../common/aegis_lanes.h"
+#    endif
+
 #    include "aegis256x4_common.h"
 
 struct aegis256x4_implementation aegis256x4_aesni_implementation = {

@@ -76,6 +76,16 @@ aegis256x2_update(aes_block_t *const state, const aes_block_t d)
     state[0] = AES_BLOCK_XOR(AES_ENC(tmp, state[0]), d);
 }
 
+/* The state fits in the registers, but clang spills the message block on every iteration of encrypt_detached(). */
+#    if defined(AEGIS_LANES_X86_64) && defined(__clang__)
+#        define AEGIS_AESNI_LANES 2
+#        include "../common/aesni_lane.h"
+#        define AEGIS_LANES_WORDS                        6
+#        define AEGIS_LANES_MIN                          512
+#        define AEGIS_DECRYPT_BULK(dst, src, len, state) 0
+#        include "../common/aegis_lanes.h"
+#    endif
+
 #    include "aegis256x2_common.h"
 
 struct aegis256x2_implementation aegis256x2_aesni_implementation = {

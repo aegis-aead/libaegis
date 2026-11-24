@@ -51,6 +51,16 @@ AES_BLOCK_LOAD_64x2(uint64_t a, uint64_t b)
     return (aes_block_t) { t, t };
 }
 
+/* Otherwise, GCC copies the key and the nonce with 16-byte stores and reads them back with 32-byte loads, which stalls. */
+static inline aes_block_t
+aes_block_broadcast128(const uint8_t *a)
+{
+    const __m256i t =
+        _mm256_broadcastsi128_si256(_mm_loadu_si128((const __m128i *) (const void *) a));
+    return (aes_block_t) { t, t };
+}
+#        define AES_BLOCK_BROADCAST128(A) aes_block_broadcast128(A)
+
 static inline void
 AES_BLOCK_STORE(uint8_t *a, const aes_block_t b)
 {
@@ -82,6 +92,14 @@ aegis128x4_update(aes_block_t *const state, const aes_block_t d1, const aes_bloc
     state[0] = AES_BLOCK_XOR(state[0], d1);
     state[4] = AES_BLOCK_XOR(state[4], d2);
 }
+
+/* With two groups, 768-byte chunks were faster than 512. */
+#        ifdef AEGIS_LANES_X86_64
+#            include "../common/avx2_lane.h"
+#            define AEGIS_LANES_WORDS 8
+#            define AEGIS_LANES_CHUNK 768
+#            include "../common/aegis_lanes.h"
+#        endif
 
 #        include "aegis128x4_common.h"
 

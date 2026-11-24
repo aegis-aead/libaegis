@@ -5,6 +5,9 @@
 #    define AEGIS_STREAM_BULK(dst, src, len, state)     0
 #    define AEGIS_STREAM_XOR_BULK(dst, src, len, state) 0
 #endif
+#ifndef AEGIS_MAC_ABSORB_BULK
+#    define AEGIS_MAC_ABSORB_BULK AEGIS_ABSORB_BULK
+#endif
 
 #define RATE      16
 #define ALIGNMENT 16
@@ -673,7 +676,7 @@ state_mac_update(aegis256_mac_state *st_, const uint8_t *ad, size_t adlen)
         ad += RATE - left;
         adlen -= RATE - left;
     }
-    for (i = AEGIS_ABSORB_BULK(NULL, ad, adlen, blocks); i + RATE * 2 <= adlen; i += RATE * 2) {
+    for (i = AEGIS_MAC_ABSORB_BULK(NULL, ad, adlen, blocks); i + RATE * 2 <= adlen; i += RATE * 2) {
         aes_block_t msg0, msg1;
 
         msg0 = AES_BLOCK_LOAD(ad + i + AES_BLOCK_LENGTH * 0);
