@@ -107,7 +107,15 @@ pub fn build(b: *std.Build) void {
         "src/raf/raf_merkle.c",
     };
 
-    lib.root_module.addCSourceFiles(.{ .files = source_files, .flags = &.{"-std=c99"} });
+    const base_flags = .{"-std=c99"};
+    const lifetime_flags = .{ "-Xclang", "-fexperimental-lifetime-safety-c", "-Werror=lifetime-safety" };
+    const has_lifetime_safety = @hasDecl(std.Build, "runFallible") and b.runFallible(&(.{
+        b.graph.zig_exe, "clang", "-fsyntax-only", "-x", "c", "-", "-Werror=unknown-warning-option",
+    } ++ lifetime_flags), .{ .stderr_behavior = .ignore }) == .success;
+    lib.root_module.addCSourceFiles(.{
+        .files = source_files,
+        .flags = if (has_lifetime_safety) &(base_flags ++ lifetime_flags) else &base_flags,
+    });
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
